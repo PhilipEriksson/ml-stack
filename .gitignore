@@ -1,15 +1,43 @@
 # =========================
-# ML ARTIFACTS
+# ML ARTIFACTS (ignore contents, keep dirs via .gitkeep)
 # =========================
 
-models/
-datasets/
-outputs/
+# Models — ignore all files, keep structure
+models/**/*
+!models/base/.gitkeep
+!models/quantized/.gitkeep
+!models/finetuned/.gitkeep
+
+# Datasets — ignore all files, keep structure
+datasets/**/*
+!datasets/raw/.gitkeep
+!datasets/processed/.gitkeep
+
+# Outputs — ignore all files, keep structure
+outputs/**/*
+!outputs/evals/.gitkeep
+!outputs/runs/.gitkeep
+
+# Training runs and artifacts
 runs/
 artifacts/
 
 # =========================
-# REGISTRIES (optional but recommended if they change locally)
+# RUNTIMES (external source + large build)
+# =========================
+runtimes/**/*
+!runtimes/.gitkeep
+
+# =========================
+# LOCAL STATE
+# =========================
+.claude_env
+.claude/
+configs/llama/
+configs/vllm/.active-vllm
+
+# =========================
+# REGISTRIES (local state)
 # =========================
 configs/models/registry.json
 configs/datasets/registry.json
@@ -24,30 +52,7 @@ __pycache__/
 .env/
 
 # =========================
-# HF / CACHE
-# =========================
-~/.cache/huggingface/
-~/.huggingface/
-
-# =========================
-# LOCAL STATE
-# =========================
-.claude_env
-.claude/
-configs/llama/
-configs/vllm/.active-vllm
-
-# =========================
-# RUNTIMES (external source + large build)
-# =========================
-runtimes/
-
-# =========================
-# LOGS
-# =========================
-*.log
-
-# =========================
 # SYSTEM
 # =========================
 .DS_Store
+*.log
