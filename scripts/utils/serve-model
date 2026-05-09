@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+
+set -e
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+REGISTRY="$ROOT/configs/models/registry.json"
+
+# =========================
+# INPUT
+# =========================
+FAMILY=$1
+VARIANT=$2
+shift 2 || true
+
+# =========================
+# DEFAULTS
+# =========================
+CTX=16384
+NGL=999
+PORT=8000
+HOST="0.0.0.0"
+FA="off"
+
+# =========================
+# AUTO GPU DETECTION
+# =========================
+if command -v nvidia-smi &>/dev/null 2>&1; then
+  VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1)
+  if [ "$VRAM" -ge 48 ]; then
+    CTX=32768
+    NGL=999
+  elif [ "$VRAM" -ge 24 ]; then
+    CTX=16384
+    NGL=999
+  fi
+fi
+
+# =========================
+# PARSE FLAGS
+# =========================
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ctx) CTX="$2"; shift 2 ;;
+    --ngl) NGL="$2"; shift 2 ;;
+    --port) PORT="$2"; shift 2 ;;
+    --host) HOST="$2"; shift 2 ;;
+    --fa) FA="on"; shift ;;
+    *) echo "❌ Unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+# =========================
+# LOAD FROM REGISTRY
+# =========================
+MODEL_PATH=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].path' "$REGISTRY")
+MODEL_TYPE=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].type' "$REGISTRY")
+MMPROJ=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].mmproj // empty' "$REGISTRY")
+
+if [ "$MODEL_PATH" == "null" ] || [ -z "$MODEL_PATH" ]; then
+  echo "❌ Model not found in registry: $FAMILY/$VARIANT"
+  exit 1
+fi
+
+echo "🧠 Serving: $FAMILY / $VARIANT"
+echo "📦 Path: $MODEL_PATH"
+echo "🔌 Type: $MODEL_TYPE"
+if [ -n "$MMPROJ" ]; then
+  echo "👁 Vision model: $MMPROJ"
+fi
+
+# Mark as active llama model (for claude-local dynamic env)
+mkdir -p "$ROOT/configs/llama"
+echo "$FAMILY/$VARIANT" > "$ROOT/configs/llama/.active-llama"
+
+# =========================
+# SELECT BACKEND
+# =========================
+if [ "$MODEL_TYPE" != "gguf" ]; then
+  echo "❌ serve-model only supports GGUF models (type: $MODEL_TYPE)"
+  echo "   For HF models, use the Docker vLLM service instead:"
+  echo "   docker compose -f services/docker/docker-compose.yml up -d vllm"
+  exit 1
+fi
+
+# =========================
+# CHECK VLLM DOCKER CONTAINER
+# =========================
+DOCKER_CMD=""
+if command -v docker &>/dev/null; then
+  DOCKER_CMD="docker"
+elif [ -f "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]; then
+  if [ -f "$HOME/bin/docker" ]; then
+    DOCKER_CMD="$HOME/bin/docker"
+  else
+    DOCKER_CMD="/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+  fi
+fi
+
+if [ -n "$DOCKER_CMD" ]; then
+  VLLM_RUNNING=$("$DOCKER_CMD" ps --filter "name=vllm-server" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
+  if [ -n "$VLLM_RUNNING" ]; then
+    echo ""
+    echo "⚠️  vLLM Docker container is running and using GPU memory."
+    echo "   Running both vLLM and llama.cpp may exceed your VRAM."
+    echo ""
+    read -r -p "Stop vLLM container before proceeding? [Y/n] " ANSWER
+    case "${ANSWER,,}" in
+      y|yes|"")
+        echo "   Stopping vllm-server..."
+        "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
+        sleep 2
+        echo "   ✅ vLLM stopped"
+        ;;
+      n|no)
+        echo "   Continuing with vLLM still running (may run out of VRAM)"
+        ;;
+      *)
+        echo "   Continuing with vLLM still running (may run out of VRAM)"
+        ;;
+    esac
+  fi
+fi
+
+# =========================
+# GGUF → llama.cpp
+# =========================
+LLAMA_BIN="$ROOT/runtimes/llama.cpp/build/bin/llama-server"
+
+if [ ! -f "$LLAMA_BIN" ]; then
+  echo "❌ llama.cpp not built: $LLAMA_BIN"
+  exit 1
+fi
+
+# Resolve actual GGUF file
+if [ -f "$MODEL_PATH" ]; then
+  GGUF_FILE="$MODEL_PATH"
+elif [ -d "$MODEL_PATH" ]; then
+  GGUF_FILE=$(find "$MODEL_PATH" -maxdepth 1 -name "*.gguf" | head -n 1)
+  if [ -z "$GGUF_FILE" ]; then
+    echo "❌ No .gguf file found in $MODEL_PATH"
+    exit 1
+  fi
+else
+  echo "❌ Model path not found: $MODEL_PATH"
+  exit 1
+fi
+echo "📄 GGUF file: $GGUF_FILE"
+
+CMD=(
+  "$LLAMA_BIN"
+  -m "$GGUF_FILE"
+  --host "$HOST"
+  --port "$PORT"
+  -c "$CTX"
+  -ngl "$NGL"
+  --threads 16
+)
+
+# Add vision projection if available
+if [ -n "$MMPROJ" ]; then
+  CMD+=(--mmproj "$MMPROJ")
+fi
+
+# Flash attention
+if [ "$FA" = "on" ]; then
+  CMD+=(--flash-attn)
+fi
+
+echo "🚀 Launching:"
+printf '  %s\n' "${CMD[@]}"
+
+exec "${CMD[@]}"

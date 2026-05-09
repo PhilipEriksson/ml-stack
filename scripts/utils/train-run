@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+set -e
+
+REGISTRY="$ROOT/configs/runs/registry.json"
+MODEL_REG="$ROOT/configs/models/registry.json"
+DATASET_REG="$ROOT/configs/datasets/registry.json"
+
+# =========================
+# INPUT
+# =========================
+if [ -z "$1" ] || [ -z "$2" ]; then
+  echo "Usage:"
+  echo "  train-run <run-name> <family/model> <family/dataset>"
+  echo ""
+  echo "  model and dataset must include their family prefix:"
+  echo "    ml train my-run qwen/qwen3.6-27b qwen/cnn_dailymail"
+  exit 1
+fi
+
+RUN=$1
+MODEL_REF=$2
+DATASET_REF=$3
+
+# Parse family/variant from references
+MODEL_FAM=$(echo "$MODEL_REF" | cut -d/ -f1)
+MODEL_VAR=$(echo "$MODEL_REF" | cut -d/ -f2)
+DATA_FAM=$(echo "$DATASET_REF" | cut -d/ -f1)
+DATA_VAR=$(echo "$DATASET_REF" | cut -d/ -f2)
+
+if [ "$MODEL_FAM" = "$MODEL_VAR" ] || [ -z "$MODEL_VAR" ]; then
+  echo "❌ Model reference must be in family/variant format (e.g. qwen/qwen3.6-27b)"
+  echo "   Use: ml train <run-name> <family/model> <family/dataset>"
+  exit 1
+fi
+
+if [ "$DATA_FAM" = "$DATA_VAR" ] || [ -z "$DATA_VAR" ]; then
+  echo "❌ Dataset reference must be in family/variant format (e.g. qwen/cnn_dailymail)"
+  echo "   Use: ml train <run-name> <family/model> <family/dataset>"
+  exit 1
+fi
+
+RUNS_DIR="$ROOT/outputs/runs"
+RUN_DIR="$RUNS_DIR/$RUN"
+
+mkdir -p "$RUN_DIR"/{model,dataset,logs,artifacts}
+
+# =========================
+# TIMESTAMP
+# =========================
+TIME=$(date +%Y-%m-%d_%H-%M-%S)
+
+# =========================
+# RESOLVE MODEL (precise family-based lookup)
+# =========================
+MODEL_PATH=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].path // empty' "$MODEL_REG")
+MODEL_HASH=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].hash // empty' "$MODEL_REG")
+MODEL_TYPE=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].type // empty' "$MODEL_REG")
+
+if [ -z "$MODEL_PATH" ]; then
+  echo "❌ Model not found in registry: $MODEL_FAM/$MODEL_VAR"
+  echo "   Use: ml add-model $MODEL_FAM $MODEL_VAR <hf-repo>"
+  exit 1
+fi
+
+# Warn if model type isn't suitable for fine-tuning
+if [ "$MODEL_TYPE" == "gguf" ]; then
+  echo "⚠️  GGUF models cannot be fine-tuned with Unsloth"
+  echo "⚠️  Download a base model first: ml add-model auto <hf-repo> --type base"
+  echo "⚠️  Continuing anyway — the training script may fail."
+fi
+
+# =========================
+# RESOLVE DATASET (precise family-based lookup)
+# =========================
+PROCESSED_PATH=$(jq -r --arg f "$DATA_FAM" --arg d "$DATA_VAR" '.[$f].datasets[$d].processed_path // empty' "$DATASET_REG")
+RAW_PATH=$(jq -r --arg f "$DATA_FAM" --arg d "$DATA_VAR" '.[$f].datasets[$d].local_path // empty' "$DATASET_REG")
+
+if [ -z "$RAW_PATH" ]; then
+  echo "❌ Dataset not found in registry: $DATA_FAM/$DATA_VAR"
+  echo "   Use: ml add-dataset $DATA_FAM <hf-dataset>"
+  exit 1
+fi
+
+# Prefer processed dataset, fall back to raw with warning
+if [ -n "$PROCESSED_PATH" ]; then
+  DATASET_PATH="$PROCESSED_PATH"
+else
+  echo ""
+  echo "⚠️  Dataset is not processed yet. The training script expects alpaca"
+  echo "   format (instruction, input, output) with train/ and eval/ subdirs."
+  echo "   Process it first: ml process-dataset $DATA_FAM $DATA_VAR"
+  echo "   Falling back to raw path — training may fail."
+  DATASET_PATH="$RAW_PATH"
+fi
+
+# =========================
+# SAVE METADATA
+# =========================
+echo "$MODEL_PATH" > "$RUN_DIR/model/path.txt"
+echo "$MODEL_HASH" > "$RUN_DIR/model/hash.txt"
+echo "$DATASET_PATH" > "$RUN_DIR/dataset/path.txt"
+
+# =========================
+# WRITE CONFIG
+# =========================
+cat <<EOF > "$RUN_DIR/config.json"
+{
+  "run": "$RUN",
+  "model": "$MODEL_REF",
+  "model_path": "$MODEL_PATH",
+  "model_type": "$MODEL_TYPE",
+  "model_hash": "$MODEL_HASH",
+  "dataset": "$DATASET_REF",
+  "dataset_path": "$DATASET_PATH",
+  "timestamp": "$TIME"
+}
+EOF
+
+# =========================
+# REGISTER RUN
+# =========================
+[ -s "$REGISTRY" ] || echo '{}' > "$REGISTRY"
+
+TMP=$(mktemp)
+
+jq --arg run "$RUN" \
+   --arg model "$MODEL_REF" \
+   --arg hash "$MODEL_HASH" \
+   --arg dataset "$DATASET_REF" \
+   --arg path "$RUN_DIR" \
+   --arg time "$TIME" '
+.[$run] = {
+  model: $model,
+  model_hash: $hash,
+  dataset: $dataset,
+  path: $path,
+  timestamp: $time,
+  status: "created"
+}
+' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+
+# =========================
+# DONE
+# =========================
+echo "✅ Training run created"
+echo "📦 Run: $RUN"
+echo "🤖 Model: $MODEL_REF ($MODEL_TYPE)"
+echo "🔐 Model hash: $MODEL_HASH"
+echo "📊 Dataset: $DATASET_REF"
+echo "📁 Path: $RUN_DIR"
+echo ""
+echo "Next: python scripts/train/finetune.py $RUN_DIR/config.json"

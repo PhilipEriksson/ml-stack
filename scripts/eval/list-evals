@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# List all recorded benchmark results from the eval registry
+# Usage:
+#   ml evals                    # list all evals
+#   ml evals <model-slug>       # list evals for a specific model
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+EVALS_REG="$ROOT/configs/evals/registry.json"
+
+if [ ! -s "$EVALS_REG" ]; then
+  echo "No evals recorded yet."
+  echo "Run 'ml eval' to perform your first benchmark."
+  exit 0
+fi
+
+MODEL_SLUG="${1:-}"
+
+if [ -n "$MODEL_SLUG" ]; then
+  # Show evals for a specific model
+  ENTRY=$(jq -r --arg slug "$MODEL_SLUG" '.[$slug]' "$EVALS_REG" 2>/dev/null)
+  if [ "$ENTRY" = "null" ] || [ -z "$ENTRY" ]; then
+    echo "No evals found for model '$MODEL_SLUG'."
+    echo ""
+    echo "Available models:"
+    jq -r 'keys[]' "$EVALS_REG"
+    exit 1
+  fi
+
+  COUNT=$(echo "$ENTRY" | jq '.evals | length')
+  echo "📊 $MODEL_SLUG ($COUNT evals)"
+  echo "──────────────────────────────────────────────────────────"
+
+  echo "$ENTRY" | jq -r '.evals[] |
+    "  \(.timestamp) | model: \(.model) | \(.tasks) | batch=\(.batch_size) | \(.backend) @ \(.backend_url)"'
+
+  # Show scores for the most recent eval
+  echo ""
+  echo "Latest scores:"
+  echo "$ENTRY" | jq -r '.evals[-1].scores | to_entries[] | "  \(.key): \(.value)"' 2>/dev/null
+
+else
+  # Show all evals
+  MODELS=$(jq -r 'keys[]' "$EVALS_REG")
+  TOTAL=0
+
+  for m in $MODELS; do
+    COUNT=$(jq -r --arg slug "$m" '.[$slug].evals | length' "$EVALS_REG")
+    TOTAL=$((TOTAL + COUNT))
+
+    echo "📊 $m ($COUNT evals)"
+    echo "──────────────────────────────────────────────────────────"
+
+    jq -r --arg slug "$m" '.[$slug].evals[] |
+      "  \(.timestamp) | model: \(.model) | \(.tasks) | batch=\(.batch_size) | \(.backend) @ \(.backend_url)"' "$EVALS_REG"
+
+    echo ""
+  done
+
+  echo "$TOTAL total eval(s) across ${#MODELS[@]} model(s)"
+fi

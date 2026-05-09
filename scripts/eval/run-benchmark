@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# Run lm-eval against your active inference backend (vLLM Docker or llama.cpp)
+# Usage:
+#   ml eval                          # default tasks, batch_size=4
+#   ml eval mmlu,gsm8k               # specific tasks
+#   ml eval mmlu,ifeval 8            # specific tasks, batch_size=8
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+set -e
+
+# =========================
+# DETECT ACTIVE BACKEND
+# =========================
+BACKEND_MODEL=""
+BACKEND_URL=""
+BACKEND_TYPE="vllm"
+
+# --- 1. Try vLLM Docker container (running) ---
+DOCKER_CMD=""
+if command -v docker &>/dev/null; then
+  DOCKER_CMD="docker"
+elif [ -f "$HOME/bin/docker" ]; then
+  DOCKER_CMD="$HOME/bin/docker"
+elif [ -f "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]; then
+  DOCKER_CMD="/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+fi
+
+if [ -n "$DOCKER_CMD" ]; then
+  VLLM_RUNNING=$("$DOCKER_CMD" ps --filter "name=vllm-server" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
+  if [ -n "$VLLM_RUNNING" ]; then
+    MODEL_NAME=$("$DOCKER_CMD" inspect vllm-server --format '{{range .Config.Env}}{{if (hasPrefix . "MODEL_NAME=")}}{{.}}{{end}}{{end}}' 2>/dev/null | sed 's/^MODEL_NAME=//')
+    if [ -n "$MODEL_NAME" ]; then
+      BACKEND_MODEL="$MODEL_NAME"
+      BACKEND_URL="http://localhost:8080/v1"
+      BACKEND_TYPE="vllm"
+    fi
+  fi
+fi
+
+# --- 2. Fallback: .active-vllm file ---
+if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/vllm/.active-vllm" ]; then
+  ACTIVE_ENV=$(cat "$ROOT/configs/vllm/.active-vllm")
+  if [ -f "$ROOT/configs/vllm/$ACTIVE_ENV" ]; then
+    ACTIVE_MODEL=$(grep '^MODEL_NAME=' "$ROOT/configs/vllm/$ACTIVE_ENV" | sed 's/^MODEL_NAME=//')
+    if [ -n "$ACTIVE_MODEL" ]; then
+      BACKEND_MODEL="$ACTIVE_MODEL"
+      BACKEND_URL="http://localhost:8080/v1"
+      BACKEND_TYPE="vllm"
+    fi
+  fi
+fi
+
+# --- 3. Fallback: active llama.cpp server ---
+if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
+  ACTIVE=$(cat "$ROOT/configs/llama/.active-llama")
+  if command -v lsof &>/dev/null && lsof -i :8000 -sTCP:LISTEN &>/dev/null; then
+    BACKEND_MODEL="$ACTIVE"
+    BACKEND_URL="http://localhost:8000/v1"
+    BACKEND_TYPE="llama.cpp"
+  fi
+fi
+
+if [ -z "$BACKEND_MODEL" ]; then
+  echo "❌ No active inference backend detected."
+  echo "   Start vLLM:  docker compose -f services/docker/docker-compose.yml up -d vllm"
+  echo "   Start GGUF:  ml serve-model <family> <variant>"
+  exit 1
+fi
+
+echo "🔌 Backend: $BACKEND_MODEL @ $BACKEND_URL ($BACKEND_TYPE)"
+
+# =========================
+# INPUT
+# =========================
+TASKS="${1:-mmlu,gsm8k,hellaswag,arc_challenge}"
+BATCH_SIZE="${2:-4}"
+
+# Sanitize model name for filename
+SLUG=$(echo "$BACKEND_MODEL" | tr '/ ' '-' | tr '[:upper:]' '[:lower:]')
+TS=$(date +%Y-%m-%d_%H-%M)
+OUT_DIR="$ROOT/outputs/evals"
+mkdir -p "$OUT_DIR"
+
+# =========================
+# CHECK lm-eval
+# =========================
+if ! command -v lm-eval &>/dev/null && ! command -v lm_eval &>/dev/null; then
+  echo "❌ lm-eval not found."
+  echo "   Install with: pip install 'lm-eval[multitask]'"
+  echo "   Or: conda activate training && pip install 'lm-eval[multitask]'"
+  exit 1
+fi
+
+# =========================
+# RUN
+# =========================
+# Resolve lm-eval command (installed as lm-eval or lm_eval depending on pip version)
+LM_EVAL_CMD="lm-eval"
+if ! command -v lm-eval &>/dev/null; then
+  LM_EVAL_CMD="lm_eval"
+fi
+
+echo "🧠 Running benchmark..."
+echo "   Tasks: $TASKS"
+echo "   Batch size: $BATCH_SIZE"
+echo "   Output: $OUT_DIR"
+echo ""
+
+# Record files before the run so we can find the new result file
+BEFORE=$(find "$OUT_DIR" -maxdepth 1 -name "*.json" 2>/dev/null | sort)
+
+$LM_EVAL_CMD \
+  --model openai-compat \
+  --model_args "model=${SLUG},base_url=${BACKEND_URL},temperature=0.2" \
+  --tasks "$TASKS" \
+  --batch_size "$BATCH_SIZE" \
+  --output_base_dir "$OUT_DIR" \
+  --log_samples
+
+# Find the new results JSON file (main metrics, not samples)
+AFTER=$(find "$OUT_DIR" -maxdepth 1 -name "*.json" 2>/dev/null | sort)
+RESULT_FILE=""
+for f in $AFTER; do
+  if ! echo "$BEFORE" | grep -qF "$f"; then
+    # Skip sample files
+    if ! basename "$f" | grep -q "^samples_"; then
+      RESULT_FILE="$f"
+      break
+    fi
+  fi
+done
+
+echo ""
+
+# =========================
+# UPDATE EVALS REGISTRY
+# =========================
+EVALS_REG="$ROOT/configs/evals/registry.json"
+mkdir -p "$ROOT/configs/evals"
+[ -s "$EVALS_REG" ] || echo '{}' > "$EVALS_REG"
+
+if [ -n "$RESULT_FILE" ]; then
+  # Extract scores from the result file
+  SCORES=$(jq -c '
+    .results // {} | to_entries |
+    map({key: .key, value: (.value.accuracy // .value.exact_match // .value.f1 // .value)}) |
+    from_object
+  ' "$RESULT_FILE" 2>/dev/null || echo '{}')
+
+  TMP=$(mktemp)
+  jq --arg slug "$SLUG" \
+     --arg ts "$TS" \
+     --arg model "$BACKEND_MODEL" \
+     --arg backend "$BACKEND_TYPE" \
+     --arg url "$BACKEND_URL" \
+     --arg tasks "$TASKS" \
+     --arg batch "$BATCH_SIZE" \
+     --arg result "$RESULT_FILE" \
+     --argjson scores "$SCORES" \
+     '
+     .[$slug] = (.[$slug] // {}) |
+     .[$slug].evals = (.[$slug].evals // []) |
+     .[$slug].evals += [{
+       timestamp: $ts,
+       model: $model,
+       backend: $backend,
+       backend_url: $url,
+       tasks: $tasks,
+       batch_size: ($batch | tonumber),
+       result_file: $result,
+       scores: $scores
+     }]
+     ' "$EVALS_REG" > "$TMP" && mv "$TMP" "$EVALS_REG"
+
+  echo "✅ Results saved to $RESULT_FILE"
+  echo "✅ Registry updated at $EVALS_REG"
+else
+  echo "✅ Benchmark complete — results saved to $OUT_DIR/"
+  echo "⚠️  Could not detect result file for registry update"
+fi

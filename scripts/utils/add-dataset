@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+set -e
+
+# =========================
+# INPUT
+# =========================
+if [ -z "$1" ] || [ -z "$2" ]; then
+  echo "Usage:"
+  echo "  add-dataset <family> <hf-dataset-repo>"
+  exit 1
+fi
+
+FAMILY=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+SOURCE=$2
+
+BASE_DIR="$ROOT/datasets"
+REGISTRY="$ROOT/configs/datasets/registry.json"
+TARGET="$BASE_DIR/raw/$FAMILY"
+
+mkdir -p "$TARGET"
+mkdir -p "$(dirname "$REGISTRY")"
+
+[ -s "$REGISTRY" ] || echo '{}' > "$REGISTRY"
+
+# =========================
+# HF LOGIN CHECK
+# =========================
+if ! command -v huggingface-cli &> /dev/null; then
+  echo "❌ huggingface-cli not installed"
+  exit 1
+fi
+
+if ! huggingface-cli whoami &> /dev/null; then
+  echo "🔐 Logging into Hugging Face..."
+  huggingface-cli login
+fi
+
+# =========================
+# DATASET NAME
+# =========================
+DATASET_NAME=$(basename "$SOURCE")
+LOCAL_PATH="$TARGET/$DATASET_NAME"
+
+# =========================
+# PREVENT DUPLICATES
+# =========================
+if [ -d "$LOCAL_PATH" ]; then
+  echo "⚠️ Dataset already exists locally"
+fi
+
+# =========================
+# STAGE IN REGISTRY (downloading)
+# =========================
+TMP=$(mktemp)
+
+jq --arg f "$FAMILY" \
+   --arg name "$DATASET_NAME" \
+   --arg path "$LOCAL_PATH" \
+'
+if .[$f] == null then .[$f] = {datasets:{}} end
+| .[$f].datasets[$name] = {
+    source: $name,
+    local_path: $path,
+    status: "downloading"
+  }
+' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+
+# =========================
+# DOWNLOAD (into staging directory)
+# =========================
+echo "⬇️ Downloading dataset..."
+echo "📦 $SOURCE"
+echo "📁 $LOCAL_PATH"
+
+STAGING="$LOCAL_PATH.download"
+rm -rf "$STAGING"
+mkdir -p "$STAGING"
+
+if ! huggingface-cli download "$SOURCE" \
+  --repo-type dataset \
+  --local-dir "$STAGING" \
+  --local-dir-use-symlinks False; then
+  # Rollback: set status to "error", clean up staging
+  rm -rf "$STAGING"
+
+  TMP=$(mktemp)
+  jq --arg f "$FAMILY" \
+     --arg name "$DATASET_NAME" \
+     '
+     .[$f].datasets[$name].status = "error"
+     ' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+
+  echo "❌ Download failed — registry status set to 'error'"
+  exit 1
+fi
+
+# Move from staging to final location
+rm -rf "$LOCAL_PATH"
+mv "$STAGING" "$LOCAL_PATH"
+
+# =========================
+# COMMIT TO REGISTRY (raw)
+# =========================
+TMP=$(mktemp)
+
+jq --arg f "$FAMILY" \
+   --arg name "$DATASET_NAME" \
+   --arg path "$LOCAL_PATH" \
+'
+if .[$f] == null then .[$f] = {datasets:{}} end
+| .[$f].datasets[$name] = {
+    source: $name,
+    local_path: $path,
+    status: "raw"
+  }
+' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+
+echo "✅ Dataset registered under: $FAMILY/$DATASET_NAME"

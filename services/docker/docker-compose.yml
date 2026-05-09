@@ -1,0 +1,54 @@
+# ML Stack — Modular inference stack
+#   vllm      — vLLM model serving (GPU, port 8080)
+#   api-webui — FastAPI proxy + Open WebUI (ports 8000, 3000)
+#
+# Build:  docker compose -f services/docker/docker-compose.yml build
+# Run:    docker compose -f services/docker/docker-compose.yml up -d
+# vLLM config is in configs/vllm/*.env — swap by changing the env_file reference
+
+services:
+  vllm:
+    build:
+      context: ../vllm
+      dockerfile: Dockerfile
+    container_name: vllm-server
+    runtime: nvidia
+    env_file:
+      - ../../configs/vllm/qwen3.6-27b-int4.env
+    environment:
+      - HF_HUB_CACHE=/hf-cache/hub
+    volumes:
+      - ~/.cache/huggingface:/hf-cache
+      - ${ML_STACK_HOME:-$HOME/ml-stack}/models:/opt/models:ro
+    ports:
+      - "8080:8000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  api-webui:
+    build:
+      context: ../api-webui
+      dockerfile: Dockerfile
+    container_name: ml-stack-api-webui
+    volumes:
+      - webui-data:/app/backend/data
+    ports:
+      - "8000:8000"
+      - "3000:8080"
+    environment:
+      - LLM_SERVER=http://vllm-server:8000
+      - OPENAI_API_BASE_URL=http://localhost:8000/v1
+      - OPENAI_API_KEY=sk-dummy
+      - ENABLE_OLLAMA_API=False
+    depends_on:
+      - vllm
+    restart: unless-stopped
+
+volumes:
+  webui-data:

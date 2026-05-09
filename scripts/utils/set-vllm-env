@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Set the active vLLM env file for Claude Code to detect
+# Usage: ml set-vllm-env <env-file-name>
+# Examples:
+#   ml set-vllm-env qwen3.6-27b-int4.env
+#   ml set-vllm-env llama3.1-8b.env
+
+set -e
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+ENV_DIR="$ROOT/configs/vllm"
+ENV_NAME="${1:-qwen3.6-27b-int4.env}"
+
+if [ -z "$ENV_NAME" ]; then
+  echo "Usage: ml set-vllm-env <env-file-name>"
+  exit 1
+fi
+
+if [ ! -f "$ENV_DIR/$ENV_NAME" ]; then
+  echo "❌ env file not found: $ENV_DIR/$ENV_NAME"
+  exit 1
+fi
+
+echo "$ENV_NAME" > "$ENV_DIR/.active-vllm"
+echo "✅ Active vLLM env: $ENV_NAME"
+MODEL_NAME=$(grep '^MODEL_NAME=' "$ENV_DIR/$ENV_NAME" | head -1 | cut -d= -f2-)
+echo "   Model: $MODEL_NAME"
+echo "   Run: docker compose -f services/docker/docker-compose.yml --env-file $ENV_DIR/$ENV_NAME up -d vllm"
+echo "   Then: claude-local"

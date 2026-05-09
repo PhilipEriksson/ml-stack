@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+
+set -e
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+REGISTRY="$ROOT/configs/models/registry.json"
+
+# =========================
+# USAGE
+# =========================
+# Modes:
+#   add-model auto <hf-repo> [--type base|quantized|finetuned]
+#   add-model <family> <variant> <source> [--type base|quantized|finetuned]
+#
+# Auto-detects quant format and bit-width from HF repo name/files.
+# --type overrides auto-detection.
+#
+# Examples:
+#   add-model auto bartowski/Llama-3.1-8B-Instruct-GGUF
+#   add-model auto Lorbus/Qwen3.6-27B-int4-AutoRound
+#   add-model qwen qwen3.5-32b HuggingFaceTB/SmolLM2-1.7B-Instruct --type base
+
+# =========================
+# BIT-WIDTH DETECTION
+# =========================
+detect_bits() {
+  local repo="$1"
+  local files="${2:-}"
+  local bits=""
+
+  # Check repo name for patterns like int4, int8, 4bit, 8bit, etc
+  for b in 4 8 6 3 2; do
+    if echo "$repo" | grep -qi "int${b}\|${b}bit\|fp${b}"; then
+      bits="${b}"
+      break
+    fi
+  done
+
+  # If not found in repo name, check file names
+  if [ -z "$bits" ] && [ -n "$files" ]; then
+    for b in 4 8 6 3 2; do
+      if echo "$files" | grep -qi "int${b}\|${b}bit\|fp${b}"; then
+        bits="${b}"; break
+      fi
+    done
+    # GGUF quant names: Q3_K, Q4_K, Q5_K, Q6_K, Q8_0, IQ2_XXS
+    if [ -z "$bits" ]; then
+      if echo "$files" | grep -qiE "Q3_|IQ3"; then bits="3"
+      elif echo "$files" | grep -qiE "Q4_|IQ4"; then bits="4"
+      elif echo "$files" | grep -qiE "Q5_|IQ5"; then bits="5"
+      elif echo "$files" | grep -qiE "Q6_|IQ6"; then bits="6"
+      elif echo "$files" | grep -qiE "Q8_|IQ8"; then bits="8"
+      elif echo "$files" | grep -qiE "IQ2_"; then bits="2"
+      fi
+    fi
+  fi
+
+  # Default to 4 if nothing found
+  echo "${bits:-4}"
+}
+
+# =========================
+# PARSE INPUT
+# =========================
+MODE=$1
+shift || true
+
+TYPE=""
+
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --type)
+      TYPE="$2"
+      shift 2
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+set -- "${POSITIONAL_ARGS[@]}"
+
+# =========================
+# MODE: auto
+# =========================
+if [ "$MODE" == "auto" ]; then
+  if [ -z "$1" ]; then
+    echo "Usage: add-model auto <hf-repo> [--type base|quantized|finetuned]"
+    exit 1
+  fi
+  SOURCE="$1"
+  REPO_NAME=$(basename "$SOURCE")
+  LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
+
+  # Detect family from repo name
+  if [[ "$LOWER" == *"qwen"* ]]; then
+    FAMILY="qwen"
+  elif [[ "$LOWER" == *"llama"* ]]; then
+    FAMILY="llama3"
+  else
+    echo "❌ Could not auto-detect family from $SOURCE"
+    exit 1
+  fi
+
+  VARIANT="$LOWER"
+
+# =========================
+# MODE: manual
+# =========================
+else
+  if [ -z "$3" ]; then
+    echo "Usage: add-model <family> <variant> <source> [--type base|quantized|finetuned]"
+    exit 1
+  fi
+  FAMILY=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+  VARIANT=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+  SOURCE="$3"
+fi
+
+# =========================
+# CHECK DEPS
+# =========================
+if ! command -v hf >/dev/null 2>&1; then
+  echo "❌ Hugging Face CLI not found"
+  echo "Install: pip install -U huggingface_hub"
+  exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "❌ jq not found"
+  exit 1
+fi
+
+# =========================
+# FETCH HF FILES
+# =========================
+echo "🔍 Fetching file list from HF..."
+
+FILES_JSON=$(curl -s "https://huggingface.co/api/models/$SOURCE" \
+  | jq -r '.siblings[].rfilename')
+
+if [ -z "$FILES_JSON" ]; then
+  echo "❌ No files found in repo"
+  exit 1
+fi
+
+# =========================
+# AUTO-DETECT TYPE
+# =========================
+if [ -z "$TYPE" ]; then
+  # Check for quantization files vs base model files
+  if echo "$FILES_JSON" | grep -qiE "(\.gguf|\.bin)"; then
+    TYPE="quantized"
+  elif echo "$FILES_JSON" | grep -qiE "(\.safetensors)"; then
+    TYPE="base"
+  elif echo "$FILES_JSON" | grep -qiE "(adapter_config|adapter_model\.bin)"; then
+    TYPE="finetuned"
+  else
+    echo "⚠️ Could not auto-detect type, defaulting to 'base'"
+    echo "⚠️ Use --type quantized|finetuned to override"
+    TYPE="base"
+  fi
+fi
+
+echo "📋 Detected type: $TYPE"
+
+# =========================
+# SELECT QUANT FORMAT
+# =========================
+if [ "$TYPE" == "quantized" ]; then
+  QUANT=""
+
+  # Auto-detect from repo name and file names
+  if echo "$FILES_JSON" | grep -qiE "\.gguf$"; then
+    QUANT="gguf"
+  elif echo "$LOWER" | grep -qi "auto.?round\|autoround"; then
+    QUANT="auto-round"
+  elif echo "$LOWER" | grep -qi "gptq"; then
+    QUANT="gptq"
+  elif echo "$LOWER" | grep -qi "awq"; then
+    QUANT="awq"
+  elif echo "$LOWER" | grep -qi "nvfp4\|nvidia-fp4\|nv-fp4"; then
+    QUANT="nvfp-fp4"
+  elif echo "$LOWER" | grep -qi "nvfp8\|nvidia-fp8\|nv-fp8"; then
+    QUANT="nvfp-fp8"
+  elif echo "$LOWER" | grep -qi "mxfp4\|mx-fp4"; then
+    QUANT="mx-fp4"
+  elif echo "$LOWER" | grep -qi "mxfp8\|mx-fp8"; then
+    QUANT="mx-fp8"
+  elif echo "$LOWER" | grep -qi "paro"; then
+    QUANT="paro"
+  fi
+
+  # Detect bit-width (4, 8, 6, 3, 2)
+  BITS=$(detect_bits "$LOWER" "$FILES_JSON")
+  echo "📊 Detected bit-width: ${BITS}-bit"
+
+  # Build target path based on detected quant and bit-width
+  case "$QUANT" in
+    gguf)
+      TARGET="$ROOT/models/quantized/$FAMILY/gguf/$VARIANT"
+      ;;
+    auto-round)
+      TARGET="$ROOT/models/quantized/$FAMILY/auto-round/${BITS}bit/$VARIANT"
+      ;;
+    gptq)
+      TARGET="$ROOT/models/quantized/$FAMILY/gptq/${BITS}bit/$VARIANT"
+      ;;
+    awq)
+      TARGET="$ROOT/models/quantized/$FAMILY/awq/${BITS}bit/$VARIANT"
+      ;;
+    nvfp-fp4)
+      TARGET="$ROOT/models/quantized/$FAMILY/nvfp/fp4/$VARIANT"
+      ;;
+    nvfp-fp8)
+      TARGET="$ROOT/models/quantized/$FAMILY/nvfp/fp8/$VARIANT"
+      ;;
+    mx-fp4)
+      TARGET="$ROOT/models/quantized/$FAMILY/mx/fp4/$VARIANT"
+      ;;
+    mx-fp8)
+      TARGET="$ROOT/models/quantized/$FAMILY/mx/fp8/$VARIANT"
+      ;;
+    paro)
+      TARGET="$ROOT/models/quantized/$FAMILY/other/$VARIANT"
+      ;;
+    *)
+      echo "⚠️ Unknown quant format, using 'other/'"
+      TARGET="$ROOT/models/quantized/$FAMILY/other/$VARIANT"
+      ;;
+  esac
+
+# =========================
+# BASE / FINETUNED
+# =========================
+elif [ "$TYPE" == "base" ]; then
+  TARGET="$ROOT/models/base/$FAMILY/$VARIANT"
+elif [ "$TYPE" == "finetuned" ]; then
+  TARGET="$ROOT/models/finetuned/$FAMILY/$VARIANT"
+else
+  echo "❌ Unknown type: $TYPE (use base, quantized, or finetuned)"
+  exit 1
+fi
+
+# =========================
+# STAGE IN REGISTRY (downloading)
+# =========================
+[ -s "$REGISTRY" ] || echo '{}' > "$REGISTRY"
+
+TEMP=$(mktemp)
+jq --arg fam "$FAMILY" \
+   --arg var "$VARIANT" \
+   --arg type "$TYPE" \
+   --arg path "$TARGET" \
+   '
+   .[$fam] = (.[$fam] // {}) |
+   .[$fam].models = (.[$fam].models // {}) |
+   .[$fam].models[$var] = {
+     type: $type,
+     path: $path,
+     status: "downloading"
+   }
+   ' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
+
+# =========================
+# DOWNLOAD
+# =========================
+mkdir -p "$TARGET"
+
+echo "📦 Target: $TARGET"
+echo "⬇️ Downloading..."
+
+if ! hf download "$SOURCE" --local-dir "$TARGET"; then
+  # Rollback: set status to "error"
+  TEMP=$(mktemp)
+  jq --arg fam "$FAMILY" \
+     --arg var "$VARIANT" \
+     '
+     .[$fam].models[$var].status = "error"
+     ' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
+  echo "❌ Download failed — registry status set to 'error'"
+  exit 1
+fi
+
+# Detect what was actually downloaded
+DOWNLOADED=$(find "$TARGET" -maxdepth 1 -type f \( -name "*.gguf" -o -name "*.safetensors" -o -name "*.bin" \) | head -n 1)
+
+if [ -z "$DOWNLOADED" ]; then
+  DOWNLOADED="$TARGET"
+fi
+
+echo "✅ Downloaded to: $TARGET"
+
+# =========================
+# COMPUTE HASH
+# =========================
+MODEL_HASH=$(find "$TARGET" -type f -print0 \
+  | sort -z \
+  | xargs -0 sha256sum \
+  | sha256sum \
+  | awk '{print $1}')
+
+# =========================
+# COMMIT TO REGISTRY (ready)
+# =========================
+TEMP=$(mktemp)
+
+jq --arg fam "$FAMILY" \
+   --arg var "$VARIANT" \
+   --arg type "$TYPE" \
+   --arg path "$TARGET" \
+   --arg hash "$MODEL_HASH" \
+   '
+   .[$fam] = (.[$fam] // {}) |
+   .[$fam].models = (.[$fam].models // {}) |
+   .[$fam].models[$var] = {
+     type: $type,
+     path: $path,
+     hash: $hash,
+     status: "ready"
+   }
+   ' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
+
+echo "✅ Added to registry: $FAMILY/$VARIANT"
+echo "🔐 Hash: $MODEL_HASH"
+echo "📊 Use: ml serve-model $FAMILY $VARIANT"

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+REGISTRY="$ROOT/configs/runs/registry.json"
+
+set -e
+
+if [ ! -f "$REGISTRY" ]; then
+  echo "No runs found"
+  exit 0
+fi
+
+echo "📊 ML RUNS"
+echo "===================="
+
+jq -r 'to_entries[] | "\(.key) | model: \(.value.model) | dataset: \(.value.dataset) | status: \(.value.status) | time: \(.value.timestamp)"' "$REGISTRY"

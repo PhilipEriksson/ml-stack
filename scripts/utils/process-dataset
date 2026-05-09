@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+set -e
+
+# =========================
+# INPUT
+# =========================
+if [ -z "$1" ] || [ -z "$2" ]; then
+  echo "Usage:"
+  echo "  process-dataset <family> <dataset-name> [--instruction col --input col --output col]"
+  echo ""
+  echo "  Converts a raw HF dataset to alpaca format (instruction, input, output)"
+  echo "  for Unsloth fine-tuning. Column mapping is auto-detected from common"
+  echo "  dataset patterns. Override with --instruction, --input, --output flags."
+  echo ""
+  echo "  Examples:"
+  echo "    process-dataset qwen cnn_dailymail"
+  echo "    process-dataset qwen alpaca_data --instruction prompt --output response"
+  exit 1
+fi
+
+FAMILY=$1
+DATASET=$2
+
+RAW_PATH="$ROOT/datasets/raw/$FAMILY/$DATASET"
+PROCESSED_PATH="$ROOT/datasets/processed/$FAMILY/$DATASET"
+REGISTRY="$ROOT/configs/datasets/registry.json"
+
+if [ ! -d "$RAW_PATH" ]; then
+  echo "❌ Raw dataset not found: $RAW_PATH"
+  echo "   Run: add-dataset $FAMILY <hf-dataset>"
+  exit 1
+fi
+
+# Parse optional --instruction, --input, --output flags and pass to Python
+PY_ARGS=()
+shift 2
+while [[ $# -gt 0 ]]; do
+  PY_ARGS+=("$1")
+  shift
+done
+
+echo "⚙️ Processing dataset to alpaca format..."
+echo "📦 Raw:     $RAW_PATH"
+echo "📁 Processed: $PROCESSED_PATH"
+echo ""
+
+# Run the Python processor
+SCRIPTS="$ROOT/scripts"
+python "$SCRIPTS/train/process.py" "$RAW_PATH" "$PROCESSED_PATH" "${PY_ARGS[@]}"
+
+# =========================
+# UPDATE REGISTRY
+# =========================
+[ -s "$REGISTRY" ] || echo '{}' > "$REGISTRY"
+
+TMP=$(mktemp)
+
+jq --arg f "$FAMILY" \
+   --arg d "$DATASET" \
+   --arg p "$PROCESSED_PATH" '
+.[$f].datasets[$d].processed_path = $p
+| .[$f].datasets[$d].status = "processed"
+' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+
+echo ""
+echo "✅ Dataset processed + registered"
+echo ""
+echo "Next: train-run <run-name> <family/model> $FAMILY/$DATASET"

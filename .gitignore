@@ -1,0 +1,53 @@
+# =========================
+# ML ARTIFACTS
+# =========================
+
+models/
+datasets/
+outputs/
+runs/
+artifacts/
+
+# =========================
+# REGISTRIES (optional but recommended if they change locally)
+# =========================
+configs/models/registry.json
+configs/datasets/registry.json
+configs/runs/registry.json
+
+# =========================
+# PYTHON / ENV
+# =========================
+__pycache__/
+*.pyc
+.venv/
+.env/
+
+# =========================
+# HF / CACHE
+# =========================
+~/.cache/huggingface/
+~/.huggingface/
+
+# =========================
+# LOCAL STATE
+# =========================
+.claude_env
+.claude/
+configs/llama/
+configs/vllm/.active-vllm
+
+# =========================
+# RUNTIMES (external source + large build)
+# =========================
+runtimes/
+
+# =========================
+# LOGS
+# =========================
+*.log
+
+# =========================
+# SYSTEM
+# =========================
+.DS_Store

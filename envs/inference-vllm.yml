@@ -1,0 +1,14 @@
+name: inference-vllm
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch::pytorch==2.4.0
+  - pytorch::pytorch-cuda=12.1
+  - pip
+  - pip:
+      - vllm==0.20.1
+      - transformers==4.44.0
+      - accelerate==0.33.0

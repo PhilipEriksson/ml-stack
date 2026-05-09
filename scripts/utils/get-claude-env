@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Dynamic env vars for claude-code — detects the active inference backend
+# Usage: source scripts/utils/get-claude-env
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+MODEL_NAME=""
+
+# --- 1. Try vLLM Docker container (running) ---
+DOCKER_CMD=""
+if command -v docker &>/dev/null; then
+  DOCKER_CMD="docker"
+elif [ -f "$HOME/bin/docker" ]; then
+  DOCKER_CMD="$HOME/bin/docker"
+elif [ -f "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]; then
+  DOCKER_CMD="/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
+fi
+
+if [ -n "$DOCKER_CMD" ] && [ -n "$("$DOCKER_CMD" ps --filter "name=vllm-server" --filter "status=running" --format "{{.Names}}" 2>/dev/null)" ]; then
+  MODEL_NAME=$("$DOCKER_CMD" exec vllm-server env 2>/dev/null | grep '^MODEL_NAME=' | head -1 | cut -d= -f2-)
+fi
+
+# --- 2. Fallback: .active-vllm file ---
+if [ -z "$MODEL_NAME" ] && [ -f "$ROOT/configs/vllm/.active-vllm" ]; then
+  ENV_FILE=$(cat "$ROOT/configs/vllm/.active-vllm")
+  # Resolve relative to configs/vllm/
+  case "$ENV_FILE" in
+    /*) ;;
+    *)  ENV_FILE="$ROOT/configs/vllm/$ENV_FILE" ;;
+  esac
+  if [ -f "$ENV_FILE" ]; then
+    MODEL_NAME=$(grep '^MODEL_NAME=' "$ENV_FILE" | head -1 | cut -d= -f2-)
+  fi
+fi
+
+# --- 3. Try llama.cpp (running) ---
+if [ -z "$MODEL_NAME" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
+  ACTIVE=$(cat "$ROOT/configs/llama/.active-llama")
+  FAM=$(echo "$ACTIVE" | cut -d/ -f1)
+  VAR=$(echo "$ACTIVE" | cut -d/ -f2)
+  REGISTRY="$ROOT/configs/models/registry.json"
+  if [ -f "$REGISTRY" ]; then
+    TYPE=$(jq -r --arg f "$FAM" --arg v "$VAR" '.[$f].models[$v].type // empty' "$REGISTRY" 2>/dev/null)
+    if [ "$TYPE" = "gguf" ]; then
+      # Check if llama-server is actually running on port 8000
+      if command -v lsof &>/dev/null && lsof -i :8000 -sTCP:LISTEN &>/dev/null; then
+        MODEL_NAME="$FAM/$VAR"
+      fi
+    fi
+  fi
+fi
+
+# --- 4. No backend found ---
+if [ -z "$MODEL_NAME" ]; then
+  echo "⚠️  No active inference backend detected."
+  echo "   Start vLLM:  docker compose -f services/docker/docker-compose.yml up -d vllm"
+  echo "   Start GGUF:  ml serve-model <family> <variant>"
+  exit 1
+fi
+
+# --- Set env vars ---
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8000
+export ANTHROPIC_AUTH_TOKEN=950801
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_NAME"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_NAME"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_NAME"
+export API_TIMEOUT_MS=3000000
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1

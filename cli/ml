@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+
+set -e
+
+ACTION=$1
+
+show_global_help() {
+  echo "🧠 ML Stack CLI"
+  echo "===================="
+  echo ""
+  echo "Usage:"
+  echo "  ml add-model auto <hf-repo> [--type base|quantized|finetuned]"
+  echo "  ml add-model <family> <variant> <source> [--type base|quantized|finetuned]"
+  echo "  ml add-dataset <family> <hf-dataset>"
+  echo "  ml process-dataset <family> <dataset>"
+  echo "  ml train <run-name> <model> <dataset>"
+  echo "  ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n]"
+  echo "  ml set-vllm-env <env-file-name>"
+  echo "  ml eval [tasks] [batch_size]"
+  echo "  ml evals"
+  echo "  ml compare-runs <run1> <run2>"
+  echo "  ml runs"
+  echo ""
+  echo "Help:"
+  echo "  ml help <command>"
+  echo ""
+}
+
+show_help() {
+  case "$1" in
+    add-model)
+      echo "ml add-model"
+      echo "  Downloads and registers a model from Hugging Face"
+      echo "  Auto-detects format (GGUF, GPTQ, AWQ, AutoRound) and bit-width"
+      echo "  Usage: ml add-model auto <hf-repo> [--type base|quantized|finetuned]"
+      echo "  Usage: ml add-model <family> <variant> <source> [--type base|quantized|finetuned]"
+      ;;
+
+    add-dataset)
+      echo "ml add-dataset"
+      echo "  Downloads a dataset from Hugging Face and registers it"
+      echo "  Usage: ml add-dataset <family> <hf-dataset-repo>"
+      ;;
+
+    process-dataset)
+      echo "ml process-dataset"
+      echo "  Converts a raw dataset into processed format for training"
+      echo "  Usage: ml process-dataset <family> <dataset-name>"
+      ;;
+
+    train)
+      echo "ml train"
+      echo "  Creates a new fine-tuning run (Unsloth)"
+      echo "  Usage: ml train <run-name> <model-variant> <dataset-variant>"
+      echo "  Then: python scripts/train/finetune.py outputs/runs/<run-name>/config.json"
+      ;;
+
+    set-vllm-env)
+      echo "ml set-vllm-env"
+      echo "  Set the active vLLM env file for claude-local to detect"
+      echo "  Usage: ml set-vllm-env <env-file-name>"
+      echo "  Example: ml set-vllm-env qwen3.6-27b-int4.env"
+      ;;
+
+    serve-model)
+      echo "ml serve-model"
+      echo "  Serves a GGUF model via llama.cpp"
+      echo "  Usage: ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n] [--host addr] [--fa]"
+      echo "  For HF models, use the Docker vLLM service instead"
+      ;;
+
+	compare-runs)
+	  echo "ml compare-runs"
+	  echo "  Compares two training runs (model, dataset, hash, status)"
+	  echo "  Usage: ml compare-runs <run1> <run2>"
+	  ;;
+    eval)
+      echo "ml eval"
+      echo "  Runs lm-eval benchmarks against your active inference backend"
+      echo "  Usage: ml eval [tasks] [batch_size]"
+      echo "  Defaults: tasks=mmlu,gsm8k,hellaswag,arc_challenge, batch_size=4"
+      echo "  Results are saved to outputs/evals/ and tracked in configs/evals/registry.json"
+      echo ""
+      echo "  First: pip install 'lm-eval[multitask]'"
+      echo "  Then:  ml eval"
+      echo "      ml eval mmlu,gsm8k"
+      echo "      ml eval mmlu,ifeval 8"
+      ;;
+
+    evals)
+      echo "ml evals"
+      echo "  Lists all recorded benchmark results from the eval registry"
+      echo "  Usage: ml evals"
+      echo "  Shows: model, timestamp, tasks, scores, result file path"
+      echo "  Registry: configs/evals/registry.json"
+      ;;
+
+    runs)
+      echo "ml runs"
+      echo "  Lists all recorded training runs with model, dataset, status, and timestamp"
+      ;;
+
+    *)
+      echo "Unknown command: $1"
+      echo ""
+      show_global_help
+      ;;
+  esac
+}
+
+# =========================
+# ENTRY LOGIC
+# =========================
+
+if [ -z "$ACTION" ]; then
+  show_global_help
+  exit 0
+fi
+
+if [ "$ACTION" == "help" ]; then
+  if [ -z "$2" ]; then
+    show_global_help
+  else
+    show_help "$2"
+  fi
+  exit 0
+fi
+
+shift
+
+bash "${ML_STACK_HOME:-$HOME/ml-stack}/engine/runner.sh" "$ACTION" "$@"

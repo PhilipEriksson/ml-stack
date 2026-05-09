@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+set -e
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+REGISTRY="$ROOT/configs/runs/registry.json"
+
+RUN1=$1
+RUN2=$2
+
+if [ -z "$RUN1" ] || [ -z "$RUN2" ]; then
+  echo "Usage: ml compare-runs <run1> <run2>"
+  exit 1
+fi
+
+if [ ! -f "$REGISTRY" ]; then
+  echo "No runs found"
+  exit 0
+fi
+
+R1=$(jq -r --arg r "$RUN1" '.[$r]' "$REGISTRY")
+R2=$(jq -r --arg r "$RUN2" '.[$r]' "$REGISTRY")
+
+if [ "$R1" == "null" ] || [ "$R2" == "null" ]; then
+  echo "❌ One or both runs not found"
+  exit 1
+fi
+
+echo "🔍 Comparing runs"
+echo "===================="
+
+echo ""
+echo "📦 MODEL"
+echo "$RUN1: $(echo "$R1" | jq -r '.model')"
+echo "$RUN2: $(echo "$R2" | jq -r '.model')"
+
+echo ""
+echo "🔐 MODEL HASH"
+echo "$RUN1: $(echo "$R1" | jq -r '.model_hash')"
+echo "$RUN2: $(echo "$R2" | jq -r '.model_hash')"
+
+echo ""
+echo "📊 DATASET"
+echo "$RUN1: $(echo "$R1" | jq -r '.dataset')"
+echo "$RUN2: $(echo "$R2" | jq -r '.dataset')"
+
+echo ""
+echo "📈 STATUS"
+echo "$RUN1: $(echo "$R1" | jq -r '.status')"
+echo "$RUN2: $(echo "$R2" | jq -r '.status')"
+
+echo ""
+echo "🧠 RESULT"
+if [ "$(echo "$R1" | jq -r '.model_hash')" == "$(echo "$R2" | jq -r '.model_hash')" ]; then
+  echo "⚠️ Same model version (identical weights)"
+else
+  echo "✅ Different model versions"
+fi
