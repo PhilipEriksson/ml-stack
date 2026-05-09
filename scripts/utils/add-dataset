@@ -28,14 +28,23 @@ mkdir -p "$(dirname "$REGISTRY")"
 # =========================
 # HF LOGIN CHECK
 # =========================
-if ! command -v huggingface-cli &> /dev/null; then
-  echo "❌ huggingface-cli not installed"
+HF_CMD=""
+if command -v hf &> /dev/null; then
+  HF_CMD="hf"
+elif command -v huggingface-cli &> /dev/null; then
+  HF_CMD="huggingface-cli"
+else
+  echo "❌ hf CLI not installed (pip install huggingface_hub)"
   exit 1
 fi
 
-if ! huggingface-cli whoami &> /dev/null; then
+if ! $HF_CMD auth whoami &> /dev/null; then
   echo "🔐 Logging into Hugging Face..."
-  huggingface-cli login
+  if [ "$HF_CMD" = "hf" ]; then
+    hf auth login
+  else
+    huggingface-cli login
+  fi
 fi
 
 # =========================
@@ -79,10 +88,9 @@ STAGING="$LOCAL_PATH.download"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 
-if ! huggingface-cli download "$SOURCE" \
+if ! $HF_CMD download "$SOURCE" \
   --repo-type dataset \
-  --local-dir "$STAGING" \
-  --local-dir-use-symlinks False; then
+  --local-dir "$STAGING"; then
   # Rollback: set status to "error", clean up staging
   rm -rf "$STAGING"
 

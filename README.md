@@ -132,10 +132,13 @@ Open `http://localhost:3000` for the Open WebUI.
 │       ├── add-model       ← download and register models from HF
 │       ├── add-dataset     ← download and register datasets from HF
 │       ├── compare-runs    ← compare two training runs
+│       ├── kill-training   ← find and kill running finetune.py processes
 │       ├── ml-runs         ← list all recorded training runs
-│       ├── process-dataset ← convert raw datasets to alpaca format (instruction, input, output)
+│       ├── process-dataset  ← convert raw datasets to alpaca format (instruction, input, output)
+│       ├── sample-dataset   ← create a smaller version of a processed dataset for quick tests
 │       ├── serve-model     ← serve a registered GGUF model via llama.cpp
-│       └── train-run       ← create and register a new training run
+│       ├── create-training-run  ← create and register a new training run
+│       └── execute-training-run ← run the training in the conda training env
 └── services/           ← Docker services
     ├── api-webui/      ← FastAPI proxy + Open WebUI
     ├── docker/         ← Docker Compose orchestration
@@ -245,27 +248,56 @@ ml process-dataset qwen my_alpaca --instruction prompt --output response
 
 ### Training
 
-Full workflow — download, process, train:
+Uses Unsloth's `FastLanguageModel` for efficient 4-bit LoRA fine-tuning with `SFTTrainer`. The dataset is converted from alpaca format into chat messages and formatted with the model's native chat template.
 
+**Full workflow — download, process, train:**
 ```bash
 # 1. Download raw dataset
-ml add-dataset qwen HuggingFaceTB/cnn_dailymail
+ml add-dataset qwen yahma/alpaca-cleaned
 
 # 2. Convert to alpaca format (instruction, input, output)
-ml process-dataset qwen cnn_dailymail
+ml process-dataset qwen alpaca-cleaned
 
 # 3. Download a base model for fine-tuning
-ml add-model auto <hf-repo> --type base
+ml add-model auto Qwen/Qwen3-0.6B --type base
 
 # 4. Create a training run
-ml train my-run qwen/qwen3.6-27b qwen/cnn_dailymail
+ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned
 
-# 5. Run fine-tuning (activate training env first)
-conda activate training
-python scripts/train/finetune.py outputs/runs/my-run/config.json
+# 5. Execute the training run (automatically uses the conda training env)
+ml execute-training-run my-run
+
+# 6. Kill a running training job
+ml kill-training
 ```
 
-Uses Unsloth's `FastLanguageModel` for efficient 4-bit LoRA fine-tuning with `SFTTrainer`. The dataset is converted from alpaca format into chat messages and formatted with the model's native chat template.
+#### Quick Test Run
+
+For testing the pipeline before committing to a full training run, sample a small subset of the dataset. Datasets under 10K examples automatically trigger **fast settings** (1 epoch, batch=8, sparse logging) — reducing training from ~40 min to ~30 seconds.
+
+```bash
+# Create a 1000-example version of the processed dataset
+ml sample-dataset qwen alpaca-cleaned 1000
+
+# Use it for a fast test run
+ml create-training-run my-test qwen/qwen3-0.6b qwen/alpaca-cleaned-1000
+ml execute-training-run my-test
+```
+
+Sample sizes for different use cases:
+| Samples | Train/eval split | Est. time (0.6B, RTX 5090) | Use case |
+|---|---|---|---|
+| 1,000 | 1,000 / 50 | ~30 sec | Pipeline smoke test |
+| 5,000 | 5,000 / 250 | ~2 min | Quick sanity check |
+| 10,000 | 10,000 / 500 | ~4 min | Preliminary results |
+| 51,760 (full) | 49,172 / 2,588 | ~40 min | Production run |
+
+**Force fast settings on a full dataset:**
+```bash
+ml execute-training-run my-run --sample
+```
+
+**Recommended for Qwen3-0.6B:** Start with a 1,000 or 5,000 sample to verify the pipeline, then run the full dataset with `ml execute-training-run my-run` (4 epochs, batch=2) once satisfied.
 
 ### Run Tracking
 

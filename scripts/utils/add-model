@@ -169,6 +169,18 @@ fi
 echo "📋 Detected type: $TYPE"
 
 # =========================
+# AUTO-DETECT VARIANT (pretrained, instruct, reasoning)
+# =========================
+VARIANT_TYPE="pretrained"
+if echo "$REPO_NAME" | grep -qiE "reasoning|thinking|r1\>|cot|chain.?of.?thought"; then
+  VARIANT_TYPE="reasoning"
+elif echo "$REPO_NAME" | grep -qiE "instruct|instructed|assistant|chat"; then
+  VARIANT_TYPE="instruct"
+fi
+
+echo "🏷️  Detected variant: $VARIANT_TYPE"
+
+# =========================
 # SELECT QUANT FORMAT
 # =========================
 if [ "$TYPE" == "quantized" ]; then
@@ -256,11 +268,13 @@ jq --arg fam "$FAMILY" \
    --arg var "$VARIANT" \
    --arg type "$TYPE" \
    --arg path "$TARGET" \
+   --arg variant "$VARIANT_TYPE" \
    '
    .[$fam] = (.[$fam] // {}) |
    .[$fam].models = (.[$fam].models // {}) |
    .[$fam].models[$var] = {
      type: $type,
+     variant: $variant,
      path: $path,
      status: "downloading"
    }
@@ -313,12 +327,14 @@ jq --arg fam "$FAMILY" \
    --arg var "$VARIANT" \
    --arg type "$TYPE" \
    --arg path "$TARGET" \
+   --arg variant "$VARIANT_TYPE" \
    --arg hash "$MODEL_HASH" \
    '
    .[$fam] = (.[$fam] // {}) |
    .[$fam].models = (.[$fam].models // {}) |
    .[$fam].models[$var] = {
      type: $type,
+     variant: $variant,
      path: $path,
      hash: $hash,
      status: "ready"

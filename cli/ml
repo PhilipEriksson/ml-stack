@@ -13,7 +13,10 @@ show_global_help() {
   echo "  ml add-model <family> <variant> <source> [--type base|quantized|finetuned]"
   echo "  ml add-dataset <family> <hf-dataset>"
   echo "  ml process-dataset <family> <dataset>"
-  echo "  ml train <run-name> <model> <dataset>"
+  echo "  ml sample-dataset <family> <dataset> <n>"
+  echo "  ml create-training-run <run-name> <model> <dataset>"
+  echo "  ml execute-training-run <run-name>"
+  echo "  ml kill-training"
   echo "  ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n]"
   echo "  ml set-vllm-env <env-file-name>"
   echo "  ml eval [tasks] [batch_size]"
@@ -48,11 +51,30 @@ show_help() {
       echo "  Usage: ml process-dataset <family> <dataset-name>"
       ;;
 
-    train)
-      echo "ml train"
-      echo "  Creates a new fine-tuning run (Unsloth)"
-      echo "  Usage: ml train <run-name> <model-variant> <dataset-variant>"
-      echo "  Then: python scripts/train/finetune.py outputs/runs/<run-name>/config.json"
+    sample-dataset)
+      echo "ml sample-dataset"
+      echo "  Creates a smaller version of a processed dataset by randomly sampling N examples"
+      echo "  Usage: ml sample-dataset <family> <dataset-name> <n>"
+      echo "  Example: ml sample-dataset qwen alpaca-cleaned 1000"
+      ;;
+
+    create-training-run)
+      echo "ml create-training-run"
+      echo "  Creates a new fine-tuning run configuration (Unsloth)"
+      echo "  Usage: ml create-training-run <run-name> <model-variant> <dataset-variant>"
+      ;;
+
+    execute-training-run)
+      echo "ml execute-training-run"
+      echo "  Executes a training run using the conda training environment"
+      echo "  Usage: ml execute-training-run <run-name> [--sample]"
+      echo "  --sample: 1 epoch, batch=8, faster logging (auto for <10K examples)"
+      ;;
+
+    kill-training)
+      echo "ml kill-training"
+      echo "  Finds and kills any running finetune.py training processes"
+      echo "  Usage: ml kill-training"
       ;;
 
     set-vllm-env)

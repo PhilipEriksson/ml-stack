@@ -13,10 +13,10 @@ DATASET_REG="$ROOT/configs/datasets/registry.json"
 # =========================
 if [ -z "$1" ] || [ -z "$2" ]; then
   echo "Usage:"
-  echo "  train-run <run-name> <family/model> <family/dataset>"
+  echo "  create-training-run <run-name> <family/model> <family/dataset>"
   echo ""
   echo "  model and dataset must include their family prefix:"
-  echo "    ml train my-run qwen/qwen3.6-27b qwen/cnn_dailymail"
+  echo "    ml create-training-run my-run qwen/qwen3.6-27b qwen/cnn_dailymail"
   exit 1
 fi
 
@@ -32,13 +32,13 @@ DATA_VAR=$(echo "$DATASET_REF" | cut -d/ -f2)
 
 if [ "$MODEL_FAM" = "$MODEL_VAR" ] || [ -z "$MODEL_VAR" ]; then
   echo "❌ Model reference must be in family/variant format (e.g. qwen/qwen3.6-27b)"
-  echo "   Use: ml train <run-name> <family/model> <family/dataset>"
+  echo "   Use: ml create-training-run <run-name> <family/model> <family/dataset>"
   exit 1
 fi
 
 if [ "$DATA_FAM" = "$DATA_VAR" ] || [ -z "$DATA_VAR" ]; then
   echo "❌ Dataset reference must be in family/variant format (e.g. qwen/cnn_dailymail)"
-  echo "   Use: ml train <run-name> <family/model> <family/dataset>"
+  echo "   Use: ml create-training-run <run-name> <family/model> <family/dataset>"
   exit 1
 fi
 
@@ -58,6 +58,7 @@ TIME=$(date +%Y-%m-%d_%H-%M-%S)
 MODEL_PATH=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].path // empty' "$MODEL_REG")
 MODEL_HASH=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].hash // empty' "$MODEL_REG")
 MODEL_TYPE=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].type // empty' "$MODEL_REG")
+MODEL_VARIANT=$(jq -r --arg f "$MODEL_FAM" --arg m "$MODEL_VAR" '.[$f].models[$m].variant // "pretrained"' "$MODEL_REG")
 
 if [ -z "$MODEL_PATH" ]; then
   echo "❌ Model not found in registry: $MODEL_FAM/$MODEL_VAR"
@@ -112,6 +113,7 @@ cat <<EOF > "$RUN_DIR/config.json"
   "model": "$MODEL_REF",
   "model_path": "$MODEL_PATH",
   "model_type": "$MODEL_TYPE",
+  "model_variant": "$MODEL_VARIANT",
   "model_hash": "$MODEL_HASH",
   "dataset": "$DATASET_REF",
   "dataset_path": "$DATASET_PATH",
@@ -129,12 +131,14 @@ TMP=$(mktemp)
 jq --arg run "$RUN" \
    --arg model "$MODEL_REF" \
    --arg hash "$MODEL_HASH" \
+   --arg variant "$MODEL_VARIANT" \
    --arg dataset "$DATASET_REF" \
    --arg path "$RUN_DIR" \
    --arg time "$TIME" '
 .[$run] = {
   model: $model,
   model_hash: $hash,
+  model_variant: $variant,
   dataset: $dataset,
   path: $path,
   timestamp: $time,
@@ -152,4 +156,4 @@ echo "🔐 Model hash: $MODEL_HASH"
 echo "📊 Dataset: $DATASET_REF"
 echo "📁 Path: $RUN_DIR"
 echo ""
-echo "Next: python scripts/train/finetune.py $RUN_DIR/config.json"
+echo "Next: ml execute-training-run $RUN"

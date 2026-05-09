@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+set -e
+
+RUN=$1
+shift || true
+
+# Parse optional --sample flag
+EXTRA_FLAGS=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sample)
+      EXTRA_FLAGS="--sample"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+CONFIG="$ROOT/outputs/runs/$RUN/config.json"
+
+if [ -z "$RUN" ]; then
+  echo "Usage: execute-training-run <run-name> [--sample]"
+  echo ""
+  echo "  --sample  Fast test mode: 1 epoch, batch=8, sparse logging"
+  echo "             Auto-enabled for datasets with fewer than 10K examples"
+  exit 1
+fi
+
+if [ ! -f "$CONFIG" ]; then
+  echo "❌ Config not found: $CONFIG"
+  echo "   Run 'create-training-run $RUN <model> <dataset>' first."
+  exit 1
+fi
+
+# Find conda Python directly (avoids output buffering from `conda run`)
+CONDA_PYTHON=""
+
+if [ -d "$HOME/miniconda/envs/training" ]; then
+  CONDA_PYTHON="$HOME/miniconda/envs/training/bin/python"
+elif [ -d "$HOME/anaconda3/envs/training" ]; then
+  CONDA_PYTHON="$HOME/anaconda3/envs/training/bin/python"
+fi
+
+if [ -z "$CONDA_PYTHON" ] || [ ! -f "$CONDA_PYTHON" ]; then
+  echo "⚠️  Training env 'training' not found"
+  exit 1
+fi
+
+# Auto-detect small datasets and enable fast settings
+if [ -z "$EXTRA_FLAGS" ]; then
+  DATASET_PATH=$(python3 -c "import json; print(json.load(open('$CONFIG'))['dataset_path'])" 2>/dev/null)
+  if [ -n "$DATASET_PATH" ]; then
+    NUM_SAMPLES=$(python3 -c "
+from datasets import load_from_disk
+ds = load_from_disk('$DATASET_PATH/train')
+print(len(ds))
+" 2>/dev/null)
+    if [ -n "$NUM_SAMPLES" ] && [ "$NUM_SAMPLES" -lt 10000 ] 2>/dev/null; then
+      EXTRA_FLAGS="--sample"
+      echo "⚡ Auto-detected small dataset ($NUM_SAMPLES examples), using fast settings"
+    fi
+  fi
+fi
+
+# Display mode
+if [ -n "$EXTRA_FLAGS" ]; then
+  echo "🚀 Executing training run (SAMPLE mode): $RUN"
+else
+  echo "🚀 Executing training run: $RUN"
+fi
+echo "📋 Config: $CONFIG"
+
+$CONDA_PYTHON "$ROOT/scripts/train/finetune.py" "$CONFIG" $EXTRA_FLAGS

@@ -35,7 +35,7 @@ if MISSING:
     sys.exit(1)
 
 from unsloth import FastLanguageModel
-from datasets import load_dataset
+from datasets import load_from_disk
 from transformers import TrainingArguments
 from trl import SFTTrainer
 import json
@@ -44,8 +44,17 @@ import json
 # INPUT
 # -------------------------
 config_path = sys.argv[1] if len(sys.argv) > 1 else None
+
+# Parse optional flags
+max_samples = None
+sample_mode = "--sample" in sys.argv
+
+for arg in sys.argv[2:]:
+    if arg.startswith("--max-samples="):
+        max_samples = int(arg.split("=")[1])
+
 if not config_path or not os.path.isfile(config_path):
-    print("Usage: python finetune.py <path/to/config.json>")
+    print("Usage: python finetune.py <path/to/config.json> [--max-samples=N]")
     print("")
     print("  Run 'train-run <name> <family/model> <family/dataset>' first,")
     print("  then: python finetune.py outputs/runs/<name>/config.json")
@@ -83,7 +92,7 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 )
 
 # Add LoRA adapters for fine-tuning
-model = FastLanguageModel.for_finetuning(
+model = FastLanguageModel.get_peft_model(
     model,
     r=16,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
@@ -94,7 +103,6 @@ model = FastLanguageModel.for_finetuning(
     use_gradient_checkpointing="unsloth",
     random_state=3407,
     use_rslora=False,
-    loftq_config=None,
 )
 
 # -------------------------
@@ -104,7 +112,7 @@ train_path = os.path.join(dataset_path, "train")
 eval_path = os.path.join(dataset_path, "eval")
 
 if os.path.isdir(train_path):
-    train_dataset = load_dataset(train_path, split="train")
+    train_dataset = load_from_disk(train_path)
 else:
     print("❌ Processed dataset not found at:", train_path)
     print("   Run 'process-dataset <family> <dataset-name>' first.")
@@ -112,7 +120,7 @@ else:
 
 eval_dataset = None
 if os.path.isdir(eval_path):
-    eval_dataset = load_dataset(eval_path, split="train")
+    eval_dataset = load_from_disk(eval_path)
     print(f"📊 Eval dataset: {len(eval_dataset)} examples")
 
 # -------------------------
@@ -162,32 +170,79 @@ else:
         print("   Expected: instruction, input, output (or: messages)")
         sys.exit(1)
 
+if max_samples:
+    import random
+    n = min(max_samples, len(train_dataset))
+    indices = random.sample(range(len(train_dataset)), n)
+    train_dataset = train_dataset.select(indices)
+    print(f"📊 Limited to {n} training examples (--max-samples)")
+
 print(f"📊 Training dataset: {len(train_dataset)} examples")
+
+# Use fast settings for sample runs
+if sample_mode:
+    print("⚡ Sample mode: 1 epoch, batch=8, logging every 50 steps")
+
+# Pre-format: render chat template into a 'text' column so Unsloth
+# doesn't need to call formatting_func during multiprocessing tokenization
+def format_to_text(examples):
+    texts = []
+    for msgs in examples["messages"]:
+        texts.append(tokenizer.apply_chat_template(msgs, tokenize=False))
+    return {"text": texts}
+
+train_dataset = train_dataset.map(format_to_text, batched=True, remove_columns="messages")
+if eval_dataset:
+    eval_dataset = eval_dataset.map(format_to_text, batched=True, remove_columns="messages")
+
+
+def formatting_func(example):
+    if isinstance(example["text"], list):
+        # Batch mode: example["text"] is a list of strings
+        return example["text"]
+    else:
+        # Single example mode (validation)
+        return [example["text"]]
 
 # -------------------------
 # TRAINING
 # -------------------------
 output_dir = os.path.join(run_dir, "artifacts")
 
+# Calculate training steps for warmup_steps
+if sample_mode:
+    num_epochs = 1
+    batch_size = 8
+    accum_steps = 1
+    logging_every = 50
+else:
+    num_epochs = 4
+    batch_size = 2
+    accum_steps = 4
+    logging_every = 1
+
+total_steps = (len(train_dataset) // (batch_size * accum_steps)) * num_epochs
+warmup_steps = max(1, int(total_steps * 0.05))
+
 trainer = SFTTrainer(
     model=model,
     tokenizer=tokenizer,
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
-    dataset_text_field="messages",
+    formatting_func=formatting_func,
     max_seq_length=2048,
     packing=False,
     args=TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=4,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
+        num_train_epochs=num_epochs,
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=accum_steps,
         learning_rate=2e-4,
         weight_decay=0.01,
-        warmup_ratio=0.05,
+        warmup_steps=warmup_steps,
         lr_scheduler_type="cosine",
-        fp16=True,
-        logging_steps=1,
+        bf16=True,
+        logging_steps=logging_every,
         optim="adamw_8bit",
         max_steps=-1,
         save_strategy="epoch",

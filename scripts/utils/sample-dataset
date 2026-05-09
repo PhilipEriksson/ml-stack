@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+
+set -e
+
+# =========================
+# INPUT
+# =========================
+if [ -z "$1" ] || [ -z "$2" ]; then
+  echo "Usage:"
+  echo "  sample-dataset <family> <dataset-name> <n-samples>"
+  echo ""
+  echo "  Creates a smaller version of a processed dataset by randomly sampling"
+  echo "  N examples from the train split (keeping all eval examples)."
+  echo ""
+  echo "  Examples:"
+  echo "    sample-dataset qwen alpaca-cleaned 1000"
+  echo "    sample-dataset qwen alpaca-cleaned 5000"
+  exit 1
+fi
+
+FAMILY=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+DATASET=$2
+N=$3
+SUFFIX="-${N}"
+DATASET_NAME="${DATASET}${SUFFIX}"
+
+RAW_PATH="$ROOT/datasets/raw/$FAMILY/$DATASET"
+PROCESSED_PATH="$ROOT/datasets/processed/$FAMILY/$DATASET"
+SMALL_PROCESSED="$ROOT/datasets/processed/$FAMILY/$DATASET_NAME"
+REGISTRY="$ROOT/configs/datasets/registry.json"
+
+if [ ! -d "$PROCESSED_PATH" ]; then
+  echo "❌ Processed dataset not found: $PROCESSED_PATH"
+  echo "   Run: process-dataset $FAMILY $DATASET first"
+  exit 1
+fi
+
+echo "⚙️  Sampling ${N} examples from $DATASET ..."
+echo "📦 Original:  $PROCESSED_PATH"
+echo "📁 Sampled:   $SMALL_PROCESSED"
+
+# Run the Python sampler
+python "$ROOT/scripts/utils/sample-dataset.py" "$PROCESSED_PATH" "$SMALL_PROCESSED" "$N"
+
+# =========================
+# REGISTER
+# =========================
+[ -s "$REGISTRY" ] || echo '{}' > "$REGISTRY"
+
+TMP=$(mktemp)
+
+jq --arg f "$FAMILY" \
+   --arg d "$DATASET_NAME" \
+   --arg p "$SMALL_PROCESSED" \
+   --arg src "$DATASET (sampled)" \
+'
+.[$f].datasets[$d] = {
+  source: $src,
+  local_path: $p,
+  status: "processed",
+  processed_path: $p
+}
+' "$REGISTRY" > "$TMP" && mv "$TMP" "$REGISTRY"
+
+echo ""
+echo "✅ Sampled dataset registered as: $FAMILY/$DATASET_NAME"
+echo ""
+echo "Next:"
+echo "  ml create-training-run <run-name> <family/model> $FAMILY/$DATASET_NAME"
+echo "  ml execute-training-run <run-name>"
+echo ""
+echo "  Note: datasets under 10K examples automatically trigger fast settings"
+echo "  (1 epoch, batch=8, sparse logging) when run through execute-training-run"

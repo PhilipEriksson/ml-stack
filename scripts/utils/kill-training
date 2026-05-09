@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -e
+
+PIDS=$(pgrep -f "finetune\.py" 2>/dev/null || true)
+
+if [ -z "$PIDS" ]; then
+  echo "✅ No training processes running"
+  exit 0
+fi
+
+echo "🔪 Killing training process(es):"
+echo "$PIDS"
+
+for pid in $PIDS; do
+  kill "$pid" 2>/dev/null || true
+done
+
+# Give it a moment
+sleep 1
+
+# Force kill if still alive
+REMAINING=$(pgrep -f "finetune\.py" 2>/dev/null || true)
+if [ -n "$REMAINING" ]; then
+  echo "⚠️  Force killing remaining process(es)..."
+  for pid in $REMAINING; do
+    kill -9 "$pid" 2>/dev/null || true
+  done
+fi
+
+echo "✅ All training processes stopped"

@@ -139,10 +139,10 @@ elif command -v pip &>/dev/null; then
 fi
 
 # huggingface_hub (hf CLI)
-if command -v huggingface-cli &>/dev/null; then
-  echo "  ✅ huggingface_hub (huggingface-cli)"
+if command -v hf &>/dev/null; then
+  echo "  ✅ huggingface_hub (hf CLI)"
 else
-  echo "  ⚠️  huggingface_hub (huggingface-cli) not found"
+  echo "  ⚠️  huggingface_hub (hf CLI) not found"
   if [ "$INSTALL_MODE" = true ] && [ -n "$PIP_CMD" ]; then
     echo "     → Installing..."
     $PIP_CMD install --upgrade huggingface_hub

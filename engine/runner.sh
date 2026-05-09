@@ -9,11 +9,24 @@ ROOT="${ML_STACK_HOME:-$HOME/ml-stack}/scripts/utils"
 
 case "$ACTION" in
 
-  train)
+  create-training-run)
     RUN=$1
     MODEL=$2
     DATASET=$3
-    bash "$ROOT/train-run" "$RUN" "$MODEL" "$DATASET"
+    bash "$ROOT/create-training-run" "$RUN" "$MODEL" "$DATASET"
+    ;;
+
+  execute-training-run)
+    RUN=$1
+    bash "$ROOT/execute-training-run" "$RUN"
+    ;;
+
+  kill-training)
+    bash "$ROOT/kill-training"
+    ;;
+
+  sample-dataset)
+    bash "$ROOT/sample-dataset" "$@"
     ;;
 
   add-model)
