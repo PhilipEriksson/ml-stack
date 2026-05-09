@@ -88,6 +88,8 @@ docker compose -f services/docker/docker-compose.yml up -d vllm
 ```
 The first launch will download the model weights (~20 GB for a 27B int4 model). Wait for "Application startup complete" in the logs.
 
+> **Performance:** Qwen3.6-27B int4 AutoRound with MTP speculative decoding delivers 100+ tokens/sec on a single RTX 5090 (32 GB) with 256K context.
+
 **6. Verify it's working:**
 ```bash
 curl http://localhost:8080/v1/models | jq
@@ -360,6 +362,7 @@ finetuned/
     "models": {
       "qwen3.6-27b-gguf": {
         "type": "gguf",
+        "variant": "instruct",
         "path": "/path/to/model/dir",
         "file": "model.gguf",
         "mmproj": "/path/to/vision-projection.gguf",
@@ -370,6 +373,13 @@ finetuned/
   }
 }
 ```
+
+**Variant types:**
+| Variant | Description | Auto-Detect Hint |
+|---|---|---|
+| `pretrained` | Raw token predictor (no fine-tuning) | No "Instruct"/"Reasoning" in name |
+| `instruct` | SFT-finetuned for instruction following | Repo name contains `Instruct` |
+| `reasoning` | CoT-trained + RLHF/RLVR for chain-of-thought | Repo name contains `Thinking`, `Reasoning`, `R1` |
 
 The `serve-model` script reads this registry to resolve the model path, type, and optional vision projection.
 
