@@ -22,7 +22,7 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 |---|---|---|
 | GPU | 1× NVIDIA RTX 5090 (32 GB VRAM) | Blackwell GB202; lower-end GPUs may not fit 27B int4 models |
 | CPU | 8+ cores | For dataset processing and llama.cpp multi-threading |
-| RAM | 32 GB | Model weights + OS overhead; 64 GB recommended for training |
+| RAM | 32 GB | Shared between system, inference and training; running both simultaneously will be tight |
 | Storage | ~50 GB free | Model weights, datasets, conda envs, Docker images |
 
 **Software**
