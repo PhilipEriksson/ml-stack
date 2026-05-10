@@ -47,9 +47,24 @@ echo "📦 Raw:     $RAW_PATH"
 echo "📁 Processed: $PROCESSED_PATH"
 echo ""
 
-# Run the Python processor
+# Run the Python processor (use active training env)
+TRAINING_PYTHON=$("$ROOT/scripts/utils/get-training-env" --python || true)
+if [ -z "$TRAINING_PYTHON" ] || [ ! -f "$TRAINING_PYTHON" ]; then
+  echo "⚠️  Active training env not found. Falling back to 'training' env..."
+  for CONDA_ROOT in "$HOME/miniconda" "$HOME/anaconda3" "$HOME/conda"; do
+    if [ -f "$CONDA_ROOT/envs/training/bin/python" ]; then
+      TRAINING_PYTHON="$CONDA_ROOT/envs/training/bin/python"
+      break
+    fi
+  done
+fi
+if [ -z "$TRAINING_PYTHON" ] || [ ! -f "$TRAINING_PYTHON" ]; then
+  echo "❌ No training environment found (looked for 'training')"
+  echo "   Create one: conda env create -f envs/training.yml"
+  exit 1
+fi
 SCRIPTS="$ROOT/scripts"
-python "$SCRIPTS/train/process.py" "$RAW_PATH" "$PROCESSED_PATH" "${PY_ARGS[@]}"
+"$TRAINING_PYTHON" "$SCRIPTS/train/process.py" "$RAW_PATH" "$PROCESSED_PATH" "${PY_ARGS[@]}"
 
 # =========================
 # UPDATE REGISTRY

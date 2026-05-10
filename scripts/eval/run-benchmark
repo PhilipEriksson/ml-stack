@@ -88,7 +88,7 @@ mkdir -p "$OUT_DIR"
 if ! command -v lm-eval &>/dev/null && ! command -v lm_eval &>/dev/null; then
   echo "❌ lm-eval not found."
   echo "   Install with: pip install 'lm-eval[multitask]'"
-  echo "   Or: conda activate training && pip install 'lm-eval[multitask]'"
+  echo "   Or: conda activate <training-env> && pip install 'lm-eval[multitask]'"
   exit 1
 fi
 

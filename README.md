@@ -2,7 +2,7 @@
 
 A local machine learning stack for model inference, fine-tuning, and evaluation.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/Platform-Linux_%26_WSL2-success?style=flat-square)]() [![Python](https://img.shields.io/badge/Python-3.10-blue?style=flat-square&logo=python)]() [![Docker](https://img.shields.io/badge/Docker-Required-blue?style=flat-square&logo=docker)]() [![GPU](https://img.shields.io/badge/GPU-RTX_5090-orange?style=flat-square)](https://www.nvidia.com/en-us/hardware/geforce/rtx-5090/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/Platform-Linux_%26_WSL2-success?style=flat-square)]() [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)]() [![Docker](https://img.shields.io/badge/Docker-Required-blue?style=flat-square&logo=docker)]() [![GPU](https://img.shields.io/badge/GPU-RTX_5090-orange?style=flat-square)](https://www.nvidia.com/en-us/hardware/geforce/rtx-5090/)
 
 [![vLLM](https://img.shields.io/badge/vLLM-v0.20.1-8B18A4?style=flat-square)](https://docs.vllm.ai) [![Open%20WebUI](https://img.shields.io/badge/Open_WebUI-main-green?style=flat-square)](https://openwebui.com) [![FastAPI](https://img.shields.io/badge/FastAPI-0.112.0-009688?style=flat-square)](https://fastapi.tiangolo.com) [![CUDA](https://img.shields.io/badge/CUDA-≥%2013-76B900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)
 
@@ -10,13 +10,11 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 
 > **Hardware target:** Optimized for **NVIDIA RTX 5090** (32 GB VRAM) with **CUDA ≥ 13**.
 
-> **⚠️ Temporary note — Training CUDA version:** The training env uses **PyTorch 2.10.0 + CUDA 12.8** as a
-> workaround. PyTorch 2.11.0's CUDA 13.0 build has a known NCCL symbol mismatch (`ncclDevCommDestroy`) that
-> prevents import. Additionally, `flash-attn` prebuilt wheels only exist for the CUDA version PyTorch was
-> compiled with — no cu130 wheels are available yet. Unsloth 2026.5.2's prebuilt extras support `cu130` but
-> only for PyTorch 2.10, not 2.11. The inference env runs PyTorch 2.11.0 + CUDA 13.0 (unchanged), and the
-> system CUDA toolkit remains 13.0 for llama.cpp builds. Once PyTorch 2.11 stabilizes and `flash-attn` ships
-> cu130 wheels, the training env will upgrade to CUDA 13 for optimal Flash Attention 2 on Blackwell.
+> **Training environment:** The `training` env uses **PyTorch 2.10.0 + CUDA 12.8**. A separate
+> `training-cuda13` env (**PyTorch 2.11.0 + CUDA 13.0**) is available for optimal Flash Attention 2
+> performance on the RTX 5090. It uses a community-built `flash-attn` 2.8.3 cu130 wheel
+> ([source](https://github.com/Dao-AILab/flash-attention/issues/2442)). Switch between environments
+> with `ml use-training-env`. See [Conda Environments](#conda-environments) for setup.
 
 [⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization)
 
@@ -43,7 +41,7 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 | Docker | Latest stable | With NVIDIA Container Toolkit installed for GPU passthrough |
 | Git | ≥ 2.x | For cloning and model management |
 | Conda (Miniconda) | Latest | For `training` and `inference-vllm` environments |
-| Python | 3.10 | Pinned in conda environments; system Python not required |
+| Python | 3.10+ | 3.10 for stable envs, 3.12 for experimental training env |
 
 **Optional**
 
@@ -272,10 +270,15 @@ ml add-model auto Qwen/Qwen3-0.6B --type base
 # 4. Create a training run
 ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned
 
-# 5. Execute the training run (automatically uses the conda training env)
+# 5. Optionally switch training environment (default: training)
+ml use-training-env                     # show current env + available options
+ml use-training-env training-cuda13     # switch to CUDA 13 env (Flash Attention 2)
+ml use-training-env training            # switch back to stable env
+
+# 6. Execute the training run
 ml execute-training-run my-run
 
-# 6. Kill a running training job
+# 7. Kill a running training job
 ml kill-training
 ```
 
@@ -569,12 +572,25 @@ claude-local   # detects the running llama.cpp server
 | File | Conda Env Name | Purpose |
 |---|---|---|
 | `envs/inference-vllm.yml` | `inference-vllm` | vLLM inference |
-| `envs/training.yml` | `training` | Unsloth + PEFT + TRL + datasets + huggingface_hub |
+| `envs/training.yml` | `training` | PyTorch 2.10 + CUDA 12.8 + Unsloth |
+| (manual) | `training-cuda13` | PyTorch 2.11 + CUDA 13.0 + Flash Attention 2 |
 
 ```bash
 # Create environments
 conda env create -f envs/inference-vllm.yml
 conda env create -f envs/training.yml
+
+# Optional: CUDA 13 training environment (recommended for RTX 5090)
+conda create -n training-cuda13 python=3.12 -y
+conda activate training-cuda13
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# Install the community flash-attn cu130 wheel (get latest from flash-attn GitHub releases)
+pip install flash-attn --no-cache-dir
+pip install unsloth --no-deps
+pip install unsloth_zoo --no-deps
+pip install trl datasets accelerate peft sentence-transformers
+# Switch to use it:
+ml use-training-env training-cuda13
 ```
 
 ## 📊 Evaluation

@@ -248,6 +248,11 @@ else
   echo "     → Or on WSL2: sudo apt install wget && wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh"
 fi
 
+echo ""
+echo "💡 Optional: For optimal Flash Attention 2 on RTX 5090, create the CUDA 13 training environment:"
+echo "   See README.md → Conda Environments for setup instructions"
+echo "   After setup: ml use-training-env training-cuda13"
+
 # =========================
 # 7. llama.cpp
 # =========================

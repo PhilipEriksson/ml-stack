@@ -35,6 +35,7 @@ runtimes/**/*
 .claude/
 configs/llama/
 configs/vllm/.active-vllm
+configs/.active-training-env
 
 # =========================
 # REGISTRIES (local state)

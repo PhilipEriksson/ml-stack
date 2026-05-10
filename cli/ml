@@ -16,6 +16,7 @@ show_global_help() {
   echo "  ml sample-dataset <family> <dataset> <n>"
   echo "  ml create-training-run <run-name> <model> <dataset>"
   echo "  ml execute-training-run <run-name>"
+  echo "  ml use-training-env [env-name]"
   echo "  ml kill-training"
   echo "  ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n]"
   echo "  ml set-vllm-env <env-file-name>"
@@ -66,9 +67,19 @@ show_help() {
 
     execute-training-run)
       echo "ml execute-training-run"
-      echo "  Executes a training run using the conda training environment"
+      echo "  Executes a training run using the active conda training environment"
       echo "  Usage: ml execute-training-run <run-name> [--sample]"
       echo "  --sample: 1 epoch, batch=8, faster logging (auto for <10K examples)"
+      echo "  Use 'ml use-training-env' to switch between environments"
+      ;;
+
+    use-training-env)
+      echo "ml use-training-env"
+      echo "  Switch the active training conda environment"
+      echo "  Usage: ml use-training-env [env-name]"
+      echo "  Without args: shows current env and available options"
+      echo "  Example: ml use-training-env training-cuda13  # switch to CUDA 13 env"
+      echo "           ml use-training-env training          # switch back to stable"
       ;;
 
     kill-training)

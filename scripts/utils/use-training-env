@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -e
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+CONFIG="$ROOT/configs/.active-training-env"
+
+if [ -z "$1" ]; then
+  echo "Usage: use-training-env <env-name>"
+  echo ""
+  echo "  Sets the active training conda environment. All training scripts"
+  echo "  will use this environment by default."
+  echo ""
+  echo "  Examples:"
+  echo "    ml use-training-env training        # stable (CUDA 12.8)"
+  echo "    ml use-training-env training-cuda13  # experimental (CUDA 13.0)"
+  echo ""
+  echo "  Current: $(cat "$CONFIG" 2>/dev/null || echo 'training (default)')"
+  exit 0
+fi
+
+# Verify the conda environment exists
+FOUND=false
+for CONDA_ROOT in "$HOME/miniconda" "$HOME/anaconda3" "$HOME/conda"; do
+  if [ -d "$CONDA_ROOT/envs/$1" ]; then
+    FOUND=true
+    break
+  fi
+done
+
+if [ "$FOUND" = false ]; then
+  echo "❌ Conda environment '$1' not found"
+  echo "   Create it first, or check the name."
+  exit 1
+fi
+
+mkdir -p "$(dirname "$CONFIG")"
+echo "$1" > "$CONFIG"
+echo "✅ Active training environment → $1"
+echo "   All training scripts will now use this environment"

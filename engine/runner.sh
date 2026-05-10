@@ -65,6 +65,10 @@ case "$ACTION" in
     bash "$ROOT/set-vllm-env" "$@"
     ;;
 
+  use-training-env)
+    bash "$ROOT/use-training-env" "$@"
+    ;;
+
   *)
     echo "Unknown action: $ACTION"
     exit 1

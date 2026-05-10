@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+# Resolves the active training conda environment name.
+# Returns the name from .active-training-env, or "training" as fallback.
+# Usage: source scripts/utils/get-training-env
+#   Then: $TRAINING_ENV contains the env name
+#   Or:   python_path=$(scripts/utils/get-training-env --python)
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+CONFIG="$ROOT/configs/.active-training-env"
+
+if [ -f "$CONFIG" ]; then
+  TRAINING_ENV=$(cat "$CONFIG" | tr -d '[:space:]')
+else
+  TRAINING_ENV="training"
+fi
+
+if [ "$1" = "--python" ]; then
+  # Resolve the full path to the conda python
+  for CONDA_ROOT in "$HOME/miniconda" "$HOME/anaconda3" "$HOME/conda"; do
+    if [ -f "$CONDA_ROOT/envs/$TRAINING_ENV/bin/python" ]; then
+      echo "$CONDA_ROOT/envs/$TRAINING_ENV/bin/python"
+      exit 0
+    fi
+  done
+  echo ""
+  exit 1
+fi
+
+echo "$TRAINING_ENV"

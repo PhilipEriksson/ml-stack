@@ -18,9 +18,9 @@ import os
 # Check required dependencies before importing
 MISSING = []
 for pkg, hint in [
-    ("unsloth", "conda activate training && pip install unsloth"),
-    ("trl", "conda activate training && pip install trl"),
-    ("bitsandbytes", "conda activate training && pip install bitsandbytes"),
+    ("unsloth", "pip install unsloth"),
+    ("trl", "pip install trl"),
+    ("bitsandbytes", "pip install bitsandbytes"),
 ]:
     try:
         __import__(pkg)
@@ -31,7 +31,7 @@ if MISSING:
     print("❌ Missing required package(s):")
     print("\n".join(MISSING))
     print("")
-    print("Try: conda env create -f envs/training.yml")
+    print("Try: conda env create -f envs/training.yml (or envs/training-cuda13.yml)")
     sys.exit(1)
 
 from unsloth import FastLanguageModel

@@ -36,25 +36,32 @@ if [ ! -f "$CONFIG" ]; then
   exit 1
 fi
 
-# Find conda Python directly (avoids output buffering from `conda run`)
-CONDA_PYTHON=""
+# Resolve active training environment
+TRAINING_ENV=$("$ROOT/scripts/utils/get-training-env")
+CONDA_PYTHON=$("$ROOT/scripts/utils/get-training-env" --python || true)
 
-if [ -d "$HOME/miniconda/envs/training" ]; then
-  CONDA_PYTHON="$HOME/miniconda/envs/training/bin/python"
-elif [ -d "$HOME/anaconda3/envs/training" ]; then
-  CONDA_PYTHON="$HOME/anaconda3/envs/training/bin/python"
+if [ -z "$CONDA_PYTHON" ] || [ ! -f "$CONDA_PYTHON" ]; then
+  echo "⚠️  Active training env '$TRAINING_ENV' not found. Falling back to 'training' env..."
+  for CONDA_ROOT in "$HOME/miniconda" "$HOME/anaconda3" "$HOME/conda"; do
+    if [ -f "$CONDA_ROOT/envs/training/bin/python" ]; then
+      CONDA_PYTHON="$CONDA_ROOT/envs/training/bin/python"
+      TRAINING_ENV="training"
+      break
+    fi
+  done
 fi
 
 if [ -z "$CONDA_PYTHON" ] || [ ! -f "$CONDA_PYTHON" ]; then
-  echo "⚠️  Training env 'training' not found"
+  echo "❌ No training environment found (looked for '$TRAINING_ENV', then 'training')"
+  echo "   Create one: conda env create -f envs/training.yml"
   exit 1
 fi
 
 # Auto-detect small datasets and enable fast settings
 if [ -z "$EXTRA_FLAGS" ]; then
-  DATASET_PATH=$(python3 -c "import json; print(json.load(open('$CONFIG'))['dataset_path'])" 2>/dev/null)
+  DATASET_PATH=$("$CONDA_PYTHON" -c "import json; print(json.load(open('$CONFIG'))['dataset_path'])" 2>/dev/null)
   if [ -n "$DATASET_PATH" ]; then
-    NUM_SAMPLES=$(python3 -c "
+    NUM_SAMPLES=$("$CONDA_PYTHON" -c "
 from datasets import load_from_disk
 ds = load_from_disk('$DATASET_PATH/train')
 print(len(ds))

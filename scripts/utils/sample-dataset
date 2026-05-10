@@ -41,8 +41,23 @@ echo "⚙️  Sampling ${N} examples from $DATASET ..."
 echo "📦 Original:  $PROCESSED_PATH"
 echo "📁 Sampled:   $SMALL_PROCESSED"
 
-# Run the Python sampler
-python "$ROOT/scripts/utils/sample-dataset.py" "$PROCESSED_PATH" "$SMALL_PROCESSED" "$N"
+# Use active training env
+TRAINING_PYTHON=$("$ROOT/scripts/utils/get-training-env" --python || true)
+if [ -z "$TRAINING_PYTHON" ] || [ ! -f "$TRAINING_PYTHON" ]; then
+  echo "⚠️  Active training env not found. Falling back to 'training' env..."
+  for CONDA_ROOT in "$HOME/miniconda" "$HOME/anaconda3" "$HOME/conda"; do
+    if [ -f "$CONDA_ROOT/envs/training/bin/python" ]; then
+      TRAINING_PYTHON="$CONDA_ROOT/envs/training/bin/python"
+      break
+    fi
+  done
+fi
+if [ -z "$TRAINING_PYTHON" ] || [ ! -f "$TRAINING_PYTHON" ]; then
+  echo "❌ No training environment found (looked for 'training')"
+  echo "   Create one: conda env create -f envs/training.yml"
+  exit 1
+fi
+"$TRAINING_PYTHON" "$ROOT/scripts/utils/sample-dataset.py" "$PROCESSED_PATH" "$SMALL_PROCESSED" "$N"
 
 # =========================
 # REGISTER
