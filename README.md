@@ -10,6 +10,14 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 
 > **Hardware target:** Optimized for **NVIDIA RTX 5090** (32 GB VRAM) with **CUDA ≥ 13**.
 
+> **⚠️ Temporary note — Training CUDA version:** The training env uses **PyTorch 2.10.0 + CUDA 12.8** as a
+> workaround. PyTorch 2.11.0's CUDA 13.0 build has a known NCCL symbol mismatch (`ncclDevCommDestroy`) that
+> prevents import. Additionally, `flash-attn` prebuilt wheels only exist for the CUDA version PyTorch was
+> compiled with — no cu130 wheels are available yet. Unsloth 2026.5.2's prebuilt extras support `cu130` but
+> only for PyTorch 2.10, not 2.11. The inference env runs PyTorch 2.11.0 + CUDA 13.0 (unchanged), and the
+> system CUDA toolkit remains 13.0 for llama.cpp builds. Once PyTorch 2.11 stabilizes and `flash-attn` ships
+> cu130 wheels, the training env will upgrade to CUDA 13 for optimal Flash Attention 2 on Blackwell.
+
 [⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization)
 
 ---

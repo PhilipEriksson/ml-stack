@@ -52,6 +52,12 @@ __pycache__/
 .env/
 
 # =========================
+# UNSLOTH
+# =========================
+unsloth_compiled_cache/**
+!unsloth_compiled_cache/.gitkeep
+
+# =========================
 # SYSTEM
 # =========================
 .DS_Store
