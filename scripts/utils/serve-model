@@ -103,21 +103,27 @@ if [ -n "$DOCKER_CMD" ]; then
     echo "⚠️  vLLM Docker container is running and using GPU memory."
     echo "   Running both vLLM and llama.cpp may exceed your VRAM."
     echo ""
-    read -r -p "Stop vLLM container before proceeding? [Y/n] " ANSWER
-    case "${ANSWER,,}" in
-      y|yes|"")
-        echo "   Stopping vllm-server..."
-        "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
-        sleep 2
-        echo "   ✅ vLLM stopped"
-        ;;
-      n|no)
-        echo "   Continuing with vLLM still running (may run out of VRAM)"
-        ;;
-      *)
-        echo "   Continuing with vLLM still running (may run out of VRAM)"
-        ;;
-    esac
+    if [ -t 0 ]; then
+      read -r -p "Stop vLLM container before proceeding? [Y/n] " ANSWER
+      case "${ANSWER,,}" in
+        y|yes|"")
+          echo "   Stopping vllm-server..."
+          "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
+          sleep 2
+          echo "   ✅ vLLM stopped"
+          ;;
+        n|no)
+          echo "   Continuing with vLLM still running (may run out of VRAM)"
+          ;;
+        *)
+          echo "   Continuing with vLLM still running (may run out of VRAM)"
+          ;;
+      esac
+    else
+      echo "   (non-interactive mode — skipping vLLM prompt, stopping automatically)"
+      "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
+      sleep 2
+    fi
   fi
 fi
 

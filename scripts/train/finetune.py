@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fine-tune a model with Unsloth SFTTrainer.
 
-Expects a config.json from train-run with:
+Expects a config.json from create-training-run with:
   - model_path: path to the model directory
   - dataset_path: path to the processed dataset directory (with train/ and eval/ subdirs)
   - model_type: "base" or "gguf" (optional)
@@ -14,6 +14,7 @@ The processed dataset should be in alpaca format with columns:
 
 import sys
 import os
+import argparse
 
 # Check required dependencies before importing
 MISSING = []
@@ -43,34 +44,32 @@ import json
 # -------------------------
 # INPUT
 # -------------------------
-config_path = sys.argv[1] if len(sys.argv) > 1 else None
+parser = argparse.ArgumentParser(description="Fine-tune a model with Unsloth SFTTrainer")
+parser.add_argument("config", help="Path to run config.json")
+parser.add_argument("--sample", action="store_true",
+                    help="Fast test mode: 1 epoch, batch=8, sparse logging")
+parser.add_argument("--max-samples", type=int, default=None,
+                    help="Limit training to N samples")
+args = parser.parse_args()
 
-# Parse optional flags
-max_samples = None
-sample_mode = "--sample" in sys.argv
-
-for arg in sys.argv[2:]:
-    if arg.startswith("--max-samples="):
-        max_samples = int(arg.split("=")[1])
-
-if not config_path or not os.path.isfile(config_path):
-    print("Usage: python finetune.py <path/to/config.json> [--max-samples=N]")
+if not os.path.isfile(args.config):
+    print("❌ Config file not found: {}".format(args.config))
     print("")
-    print("  Run 'train-run <name> <family/model> <family/dataset>' first,")
+    print("  Run 'create-training-run <name> <model> <dataset>' first,")
     print("  then: python finetune.py outputs/runs/<name>/config.json")
     sys.exit(1)
 
-with open(config_path, "r") as f:
+with open(args.config, "r") as f:
     config = json.load(f)
 
 model_path = config["model_path"]
 dataset_path = config.get("dataset_path")
-run_dir = os.path.dirname(config_path)
+run_dir = os.path.dirname(args.config)
 model_type = config.get("model_type", "base")
 
 if not dataset_path:
     print("❌ No dataset_path in config.")
-    print("   Run 'train-run <name> <family/model> <family/dataset>' first.")
+    print("   Run 'create-training-run <name> <family/model> <family/dataset>' first.")
     sys.exit(1)
 
 # -------------------------
@@ -170,9 +169,9 @@ else:
         print("   Expected: instruction, input, output (or: messages)")
         sys.exit(1)
 
-if max_samples:
+if args.max_samples:
     import random
-    n = min(max_samples, len(train_dataset))
+    n = min(args.max_samples, len(train_dataset))
     indices = random.sample(range(len(train_dataset)), n)
     train_dataset = train_dataset.select(indices)
     print(f"📊 Limited to {n} training examples (--max-samples)")
@@ -180,7 +179,7 @@ if max_samples:
 print(f"📊 Training dataset: {len(train_dataset)} examples")
 
 # Use fast settings for sample runs
-if sample_mode:
+if args.sample:
     print("⚡ Sample mode: 1 epoch, batch=8, logging every 50 steps")
 
 # Pre-format: render chat template into a 'text' column so Unsloth
@@ -210,7 +209,7 @@ def formatting_func(example):
 output_dir = os.path.join(run_dir, "artifacts")
 
 # Calculate training steps for warmup_steps
-if sample_mode:
+if args.sample:
     num_epochs = 1
     batch_size = 8
     accum_steps = 1

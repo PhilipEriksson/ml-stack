@@ -119,6 +119,8 @@ else
   FAMILY=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   VARIANT=$(echo "$2" | tr '[:upper:]' '[:lower:]')
   SOURCE="$3"
+  REPO_NAME=$(basename "$SOURCE")
+  LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
 fi
 
 # =========================

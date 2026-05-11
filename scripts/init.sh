@@ -311,7 +311,7 @@ fi
 echo ""
 echo "📂 Project structure:"
 
-for dir in models/base models/quantized models/finetuned datasets/raw datasets/processed outputs/evals scripts/utils scripts/eval services/vllm services/api-webui configs/vllm configs/llama; do
+for dir in models/base models/quantized models/finetuned datasets/raw datasets/processed outputs/evals outputs/runs scripts/utils scripts/eval services/vllm services/api-webui services/docker configs/vllm configs/llama configs/evals configs/runs; do
   if [ -d "$ROOT/$dir" ]; then
     echo "  ✅ $dir/"
   else

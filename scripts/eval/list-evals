@@ -40,12 +40,13 @@ if [ -n "$MODEL_SLUG" ]; then
 
 else
   # Show all evals
-  MODELS=$(jq -r 'keys[]' "$EVALS_REG")
   TOTAL=0
+  MODEL_COUNT=0
 
-  for m in $MODELS; do
+  while IFS= read -r m; do
     COUNT=$(jq -r --arg slug "$m" '.[$slug].evals | length' "$EVALS_REG")
     TOTAL=$((TOTAL + COUNT))
+    MODEL_COUNT=$((MODEL_COUNT + 1))
 
     echo "📊 $m ($COUNT evals)"
     echo "──────────────────────────────────────────────────────────"
@@ -54,7 +55,7 @@ else
       "  \(.timestamp) | model: \(.model) | \(.tasks) | batch=\(.batch_size) | \(.backend) @ \(.backend_url)"' "$EVALS_REG"
 
     echo ""
-  done
+  done < <(jq -r 'keys[]' "$EVALS_REG")
 
-  echo "$TOTAL total eval(s) across ${#MODELS[@]} model(s)"
+  echo "$TOTAL total eval(s) across $MODEL_COUNT model(s)"
 fi

@@ -83,4 +83,4 @@ jq --arg f "$FAMILY" \
 echo ""
 echo "✅ Dataset processed + registered"
 echo ""
-echo "Next: train-run <run-name> <family/model> $FAMILY/$DATASET"
+echo "Next: ml create-training-run <run-name> <family/model> $FAMILY/$DATASET"

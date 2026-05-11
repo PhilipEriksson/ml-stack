@@ -26,7 +26,6 @@ N=$3
 SUFFIX="-${N}"
 DATASET_NAME="${DATASET}${SUFFIX}"
 
-RAW_PATH="$ROOT/datasets/raw/$FAMILY/$DATASET"
 PROCESSED_PATH="$ROOT/datasets/processed/$FAMILY/$DATASET"
 SMALL_PROCESSED="$ROOT/datasets/processed/$FAMILY/$DATASET_NAME"
 REGISTRY="$ROOT/configs/datasets/registry.json"

@@ -10,8 +10,8 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 
 > **Hardware target:** Optimized for **NVIDIA RTX 5090** (32 GB VRAM) with **CUDA ≥ 13**.
 
-> **Training environment:** The `training` env uses **PyTorch 2.10.0 + CUDA 12.8**. A separate
-> `training-cuda13` env (**PyTorch 2.11.0 + CUDA 13.0**) is available for optimal Flash Attention 2
+> **Training environment:** The `training` env uses **PyTorch 2.4.0 + CUDA 12.1**. A separate
+> `training-cuda13` env (**PyTorch cu130 + CUDA 13.0**) is available for optimal Flash Attention 2
 > performance on the RTX 5090. It uses a community-built `flash-attn` 2.8.3 cu130 wheel
 > ([source](https://github.com/Dao-AILab/flash-attention/issues/2442)). Switch between environments
 > with `ml use-training-env`. See [Conda Environments](#conda-environments) for setup.
@@ -64,7 +64,7 @@ cd ml-stack
 ```bash
 bash scripts/init.sh
 ```
-This checks your system (Python, jq, curl, GPU, Docker, conda, llama.cpp, Docker images) and reports what's missing.
+This checks your system (Python, pip, jq, curl, GPU, Docker, conda, huggingface_hub, llama.cpp, Docker images) and reports what's missing.
 
 **3. Auto-install what it can:**
 ```bash
@@ -115,6 +115,8 @@ Open `http://localhost:3000` for the Open WebUI.
 │   └── ml
 ├── configs/            ← JSON registries and configuration files
 │   ├── datasets/       ← dataset registry
+│   ├── evals/          ← benchmark eval registry (created on first `ml eval`)
+│   ├── llama/          ← active llama.cpp model state (created by `serve-model`)
 │   ├── models/         ← model registry (used by `serve-model`)
 │   ├── runs/           ← training run registry
 │   └── vllm/           ← vLLM environment config files (.env)
@@ -130,7 +132,8 @@ Open `http://localhost:3000` for the Open WebUI.
 │   └── finetuned/      ← LoRA adapters and merged fine-tuned models
 ├── outputs/            ← experiment outputs and training artifacts
 ├── runtimes/           ← third-party runtime dependencies (e.g. llama.cpp)
-├── scripts/            ← entrypoints
+├── scripts/            ← entrypoints and orchestration
+│   ├── build.sh        ← alias for docker compose build
 │   ├── init.sh         ← one-time setup (adds `ml` to PATH)
 │   ├── train/          ← training scripts (finetune.py)
 │   ├── eval/           ← benchmark scripts (run-benchmark)
@@ -143,6 +146,8 @@ Open `http://localhost:3000` for the Open WebUI.
 │       ├── process-dataset  ← convert raw datasets to alpaca format (instruction, input, output)
 │       ├── sample-dataset   ← create a smaller version of a processed dataset for quick tests
 │       ├── serve-model     ← serve a registered GGUF model via llama.cpp
+│       ├── set-vllm-env    ← set the active vLLM env file
+│       ├── use-training-env ← switch the active training conda environment
 │       ├── create-training-run  ← create and register a new training run
 │       └── execute-training-run ← run the training in the conda training env
 └── services/           ← Docker services
@@ -572,8 +577,8 @@ claude-local   # detects the running llama.cpp server
 | File | Conda Env Name | Purpose |
 |---|---|---|
 | `envs/inference-vllm.yml` | `inference-vllm` | vLLM inference |
-| `envs/training.yml` | `training` | PyTorch 2.10 + CUDA 12.8 + Unsloth |
-| (manual) | `training-cuda13` | PyTorch 2.11 + CUDA 13.0 + Flash Attention 2 |
+| `envs/training.yml` | `training` | PyTorch 2.4.0 + CUDA 12.1 + Unsloth |
+| (manual) | `training-cuda13` | PyTorch (cu130) + CUDA 13.0 + Flash Attention 2 |
 
 ```bash
 # Create environments

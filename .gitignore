@@ -42,6 +42,7 @@ configs/.active-training-env
 # =========================
 configs/models/registry.json
 configs/datasets/registry.json
+configs/evals/registry.json
 configs/runs/registry.json
 
 # =========================
@@ -57,6 +58,11 @@ __pycache__/
 # =========================
 unsloth_compiled_cache/**
 !unsloth_compiled_cache/.gitkeep
+
+# =========================
+# STRAY FILES
+# =========================
+=2026*
 
 # =========================
 # SYSTEM
