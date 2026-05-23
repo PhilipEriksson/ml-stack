@@ -10,15 +10,18 @@ REGISTRY="$ROOT/configs/models/registry.json"
 # =========================
 # Modes:
 #   add-model auto <hf-repo> [--type base|quantized|finetuned]
-#   add-model <family> <variant> <source> [--type base|quantized|finetuned]
+#   add-model <family> <variant> <source> [--type base|quantized|finetuned] [--file <filename>]
 #
 # Auto-detects quant format and bit-width from HF repo name/files.
 # --type overrides auto-detection.
+# --file downloads only a specific file from the repo (useful for GGUF repos with multiple quantizations).
 #
 # Examples:
 #   add-model auto bartowski/Llama-3.1-8B-Instruct-GGUF
 #   add-model auto Lorbus/Qwen3.6-27B-int4-AutoRound
 #   add-model qwen qwen3.5-32b HuggingFaceTB/SmolLM2-1.7B-Instruct --type base
+#   add-model qwen qwopus3.6-27b-v2 Jackrong/Qwopus3.6-27B-v2-GGUF --file Qwopus3.6-27B-v2-Q4_K_M.gguf
+#   add-model qwen qwopus3.6-27b-v2 --url https://huggingface.co/Jackrong/Qwopus3.6-27B-v2-GGUF/resolve/main/Qwopus3.6-27B-v2-Q4_K_M.gguf
 
 # =========================
 # BIT-WIDTH DETECTION
@@ -35,6 +38,25 @@ detect_bits() {
       break
     fi
   done
+
+  # If a specific file name is given (--file), check it first
+  if [ -n "${3:-}" ]; then
+    local file_pattern="$3"
+    for b in 4 8 6 3 2; do
+      if echo "$file_pattern" | grep -qi "int${b}\|${b}bit\|fp${b}"; then
+        bits="${b}"; break
+      fi
+    done
+    if [ -z "$bits" ]; then
+      if echo "$file_pattern" | grep -qiE "Q3_|IQ3"; then bits="3"
+      elif echo "$file_pattern" | grep -qiE "Q4_|IQ4"; then bits="4"
+      elif echo "$file_pattern" | grep -qiE "Q5_|IQ5"; then bits="5"
+      elif echo "$file_pattern" | grep -qiE "Q6_|IQ6"; then bits="6"
+      elif echo "$file_pattern" | grep -qiE "Q8_|IQ8"; then bits="8"
+      elif echo "$file_pattern" | grep -qiE "IQ2_"; then bits="2"
+      fi
+    fi
+  fi
 
   # If not found in repo name, check file names
   if [ -z "$bits" ] && [ -n "$files" ]; then
@@ -66,6 +88,8 @@ MODE=$1
 shift || true
 
 TYPE=""
+FILE=""
+URL=""
 
 POSITIONAL_ARGS=()
 
@@ -75,6 +99,14 @@ while [[ $# -gt 0 ]]; do
       TYPE="$2"
       shift 2
       ;;
+    --file)
+      FILE="$2"
+      shift 2
+      ;;
+    --url)
+      URL="$2"
+      shift 2
+      ;;
     *)
       POSITIONAL_ARGS+=("$1")
       shift
@@ -82,17 +114,37 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# =========================
+# PARSE --url into SOURCE and FILE
+# =========================
+FROM_URL=false
+if [ -n "$URL" ]; then
+  # Parse URLs like:
+  #   https://huggingface.co/Jackrong/Qwopus3.6-27B-v2-GGUF/resolve/main/Qwopus3.6-27B-v2-Q4_K_M.gguf
+  #   https://huggingface.co/janus/project-aura/resolve/main/file.gguf
+  if [[ "$URL" =~ ^https://huggingface\.co/([^/]+/[^/]+)/resolve/[^/]+/(.+)$ ]]; then
+    SOURCE="${BASH_REMATCH[1]}"
+    FILE="${BASH_REMATCH[2]}"
+    FROM_URL=true
+  else
+    echo "❌ Could not parse URL: $URL"
+    echo "Expected format: https://huggingface.co/<org>/<repo>/resolve/<branch>/<filename>"
+    exit 1
+  fi
+fi
+
 set -- "${POSITIONAL_ARGS[@]}"
 
 # =========================
 # MODE: auto
 # =========================
 if [ "$MODE" == "auto" ]; then
-  if [ -z "$1" ]; then
+  # --url in auto mode: SOURCE/FILE already parsed, skip positional
+  if [ -z "$SOURCE" ] && [ -z "$1" ]; then
     echo "Usage: add-model auto <hf-repo> [--type base|quantized|finetuned]"
     exit 1
   fi
-  SOURCE="$1"
+  [ -z "$SOURCE" ] && SOURCE="$1"
   REPO_NAME=$(basename "$SOURCE")
   LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
 
@@ -112,13 +164,24 @@ if [ "$MODE" == "auto" ]; then
 # MODE: manual
 # =========================
 else
-  if [ -z "$3" ]; then
-    echo "Usage: add-model <family> <variant> <source> [--type base|quantized|finetuned]"
-    exit 1
+  if [ "$FROM_URL" = true ]; then
+    # SOURCE came from --url; positional args are just variant
+    if [ -z "$1" ]; then
+      echo "Usage: add-model <family> <variant> [--url <hf-url>]"
+      exit 1
+    fi
+    FAMILY=$(echo "$MODE" | tr '[:upper:]' '[:lower:]')
+    VARIANT=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+  else
+    # Require variant + source (--file is optional)
+    if [ -z "$1" ] || [ -z "$2" ]; then
+      echo "Usage: add-model <family> <variant> <source> [--type base|quantized|finetuned] [--file <filename>]"
+      exit 1
+    fi
+    FAMILY=$(echo "$MODE" | tr '[:upper:]' '[:lower:]')
+    VARIANT=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+    SOURCE="$2"
   fi
-  FAMILY=$(echo "$1" | tr '[:upper:]' '[:lower:]')
-  VARIANT=$(echo "$2" | tr '[:upper:]' '[:lower:]')
-  SOURCE="$3"
   REPO_NAME=$(basename "$SOURCE")
   LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
 fi
@@ -210,7 +273,7 @@ if [ "$TYPE" == "quantized" ]; then
   fi
 
   # Detect bit-width (4, 8, 6, 3, 2)
-  BITS=$(detect_bits "$LOWER" "$FILES_JSON")
+  BITS=$(detect_bits "$LOWER" "$FILES_JSON" "${FILE:-}")
   echo "📊 Detected bit-width: ${BITS}-bit"
 
   # Build target path based on detected quant and bit-width
@@ -288,18 +351,26 @@ jq --arg fam "$FAMILY" \
 mkdir -p "$TARGET"
 
 echo "📦 Target: $TARGET"
-echo "⬇️ Downloading..."
+echo "⬇️ Downloading${FILE:+ $FILE}..."
 
-if ! hf download "$SOURCE" --local-dir "$TARGET"; then
-  # Rollback: set status to "error"
-  TEMP=$(mktemp)
-  jq --arg fam "$FAMILY" \
-     --arg var "$VARIANT" \
-     '
-     .[$fam].models[$var].status = "error"
-     ' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
-  echo "❌ Download failed — registry status set to 'error'"
-  exit 1
+if [ -n "$FILE" ]; then
+  if ! hf download "$SOURCE" "$FILE" --local-dir "$TARGET"; then
+    TEMP=$(mktemp)
+    jq --arg fam "$FAMILY" \
+       --arg var "$VARIANT" \
+       '.[$fam].models[$var].status = "error"' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
+    echo "❌ Download failed — registry status set to 'error'"
+    exit 1
+  fi
+else
+  if ! hf download "$SOURCE" --local-dir "$TARGET"; then
+    TEMP=$(mktemp)
+    jq --arg fam "$FAMILY" \
+       --arg var "$VARIANT" \
+       '.[$fam].models[$var].status = "error"' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
+    echo "❌ Download failed — registry status set to 'error'"
+    exit 1
+  fi
 fi
 
 # Detect what was actually downloaded
