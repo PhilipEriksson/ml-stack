@@ -16,7 +16,7 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 > ([source](https://github.com/Dao-AILab/flash-attention/issues/2442)). Switch between environments
 > with `ml use-training-env`. See [Conda Environments](#conda-environments) for setup.
 
-[⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization)
+[⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [🔍 Web Search](#web-search) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization)
 
 ---
 
@@ -119,6 +119,7 @@ Open `http://localhost:3000` for the Open WebUI.
 │   ├── llama/          ← active llama.cpp model state (created by `serve-model`)
 │   ├── models/         ← model registry (used by `serve-model`)
 │   ├── runs/           ← training run registry
+│   ├── searxng/        ← SearXNG search configuration
 │   └── vllm/           ← vLLM environment config files (.env)
 ├── datasets/           ← downloaded datasets (raw/ + processed/)
 ├── engine/             ← script orchestration
@@ -154,6 +155,7 @@ Open `http://localhost:3000` for the Open WebUI.
     ├── api-webui/      ← FastAPI proxy + Open WebUI
     ├── docker/         ← Docker Compose orchestration
     │   └── docker-compose.yml
+    ├── searxng/        ← SearXNG search engine
     └── vllm/           ← vLLM Docker service (env-driven config)
 ```
 
@@ -451,11 +453,12 @@ schtasks /create /tn "ML-Stack-API-WebUI" /tr "wsl bash -c 'cd /home/YOUR_USER/m
 
 ### Architecture
 
-Two modular Docker services:
+Three modular Docker services:
 
 | Service | Dockerfile | Description |
 |---|---|---|
 | **vllm** | `services/vllm/Dockerfile` | vLLM model serving (GPU) |
+| **searxng** | `services/searxng/Dockerfile` | SearXNG metasearch engine |
 | **api-webui** | `services/api-webui/Dockerfile` | FastAPI proxy + Open WebUI |
 
 ### vLLM Service
@@ -523,6 +526,7 @@ Based on `ghcr.io/open-webui/open-webui:main`. Adds a FastAPI proxy that:
 | 8080 | 8000 | vLLM (direct API access) |
 | 8000 | 8000 | FastAPI proxy |
 | 3000 | 8080 | Open WebUI (web interface) |
+| 8888 | 8080 | SearXNG (direct search access) |
 
 ### Running with Docker Compose
 
@@ -545,6 +549,47 @@ docker compose -f services/docker/docker-compose.yml down
 # View logs
 docker compose -f services/docker/docker-compose.yml logs -f vllm
 docker compose -f services/docker/docker-compose.yml logs -f api-webui
+```
+
+### Web Search
+
+The stack includes a SearXNG search service that provides web search results to the LLM via the FastAPI proxy. SearXNG is a metasearch engine aggregating results from 70+ search engines (Google, Bing, Wikipedia, and more). A DuckDuckGo fallback is available if SearXNG is unavailable.
+
+**Architecture:**
+
+| Service | Host Port | Container Port | Purpose |
+|---|---|---|---|
+| **vllm** | 8080 | 8000 | vLLM model serving (direct API) |
+| **api-webui** | 8000 | 8000 | FastAPI proxy + Open WebUI (8080→3000) |
+| **searxng** | 8888 | 8080 | SearXNG search engine |
+
+The FastAPI proxy at port 8000 routes search requests to the SearXNG container and exposes a clean REST API with an OpenAPI spec for auto-discovery.
+
+**Enabling web search in Open WebUI:**
+
+1. Open Open WebUI (port 3000) and navigate to **Settings → Integrations → Tool Servers**
+2. Click **Add New** and enter the following:
+   - **URL:** `http://<hostname>:8000` — Use your server's hostname or IP. If accessing over Tailscale from another machine, use your Tailscale URL (e.g., `http://p5090.taila6ea3a.ts.net:8000`). If accessing locally, use `http://localhost:8000`
+   - **Name:** `Web Search`
+3. Save — Open WebUI will auto-discover the `search_web` tool from the OpenAPI spec at `/openapi.json`
+
+> **Why not `localhost` when accessing remotely?** The Tool Server URL is resolved by your *browser*, not the server. When connecting from a MacBook over Tailscale, `localhost` resolves to the MacBook — not the server hosting the containers.
+
+**Search endpoint:**
+
+```bash
+# Search via GET
+curl "http://localhost:8000/search?q=what+is+the+current+date"
+
+# Search via POST
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "DDR5 RAM prices", "max_results": 5}'
+```
+
+**Start all services including search:**
+```bash
+docker compose -f services/docker/docker-compose.yml up -d
 ```
 
 ## 🤖 Using with Claude Code

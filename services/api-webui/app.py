@@ -5,10 +5,13 @@ import httpx
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="ML Stack API")
+app = FastAPI(title="ML Stack API", openapi_url=None)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 LLM_SERVER = os.getenv("LLM_SERVER", "http://vllm-server:8000")
+SEARXNG_SERVER = os.getenv("SEARXNG_SERVER", "")
 
 
 async def proxy_get(path):
@@ -150,6 +153,88 @@ async def health():
     return {"status": "ok"}
 
 
+def _get_openapi_spec():
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "Web Search", "version": "1.0.0", "description": "Search the web using SearXNG. Returns titles, URLs, and snippets."},
+        "servers": [{"url": "http://localhost:8000"}],
+        "paths": {
+            "/search": {
+                "get": {
+                    "operationId": "search_web",
+                    "summary": "Search the web",
+                    "description": "Search the web for real-time information. Returns titles, URLs, and snippets.",
+                    "parameters": [
+                        {"name": "q", "in": "query", "required": True, "schema": {"type": "string"}, "description": "The search query"},
+                        {"name": "categories", "in": "query", "schema": {"type": "string", "default": "general"}, "description": "Search categories: general, news, images, videos, science, it, files, social media"},
+                        {"name": "number_of_results", "in": "query", "schema": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20}, "description": "Maximum number of results to return"},
+                    ],
+                    "responses": {"200": {"description": "Search results"}},
+                },
+            },
+        },
+    }
+
+
+@app.get("/openapi.json")
+@app.get("/search/openapi.json")
+async def search_openapi():
+    return _get_openapi_spec()
+
+
+@app.get("/api/config")
+async def tool_server_config():
+    return {
+        "name": "web_search",
+        "displayName": "Web Search",
+        "type": "tool_server",
+        "baseUrl": "http://localhost:8000",
+        "openapi": "http://localhost:8000/openapi.json",
+    }
+
+
+def _do_search(q, max_results=5, categories="general"):
+    """Search via SearXNG (primary) with DuckDuckGo fallback."""
+    if SEARXNG_SERVER:
+        data = {"q": q, "format": "json", "categories": [categories], "number_of_results": max_results}
+        headers = {"User-Agent": "ml-stack-api", "X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(f"{SEARXNG_SERVER}/search?language=en", data=data, headers=headers)
+            if resp.status_code == 200:
+                json_data = resp.json()
+                results = []
+                for r in json_data.get("results", [])[:max_results]:
+                    results.append({"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")})
+                return results
+
+    try:
+        from duckduckgo_search import DDGS
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(q, max_results=max_results):
+                results.append({"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")})
+        return results
+    except ImportError:
+        return []
+
+
+@app.get("/search")
+def search(q: str, categories: str = "general", number_of_results: int = 5):
+    results = _do_search(q, number_of_results, categories)
+    return {"query": q, "category": categories, "results": results}
+
+
+@app.post("/search")
+async def search_json(request: Request):
+    body = await request.json()
+    q = body.get("query") or body.get("q", "")
+    if not q:
+        return JSONResponse({"error": "Missing 'query' parameter"}, status_code=400)
+    categories = body.get("categories", "general")
+    max_results = body.get("max_results", 5)
+    results = _do_search(q, max_results, categories)
+    return {"query": q, "category": categories, "results": results}
+
 @app.get("/v1/models")
 async def models_v1():
     return await proxy_get("/v1/models")
@@ -196,6 +281,9 @@ async def proxy_v1(path: str, request: Request):
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_catchall(path: str, request: Request):
+    # Don't proxy our own endpoints
+    if path in ("openapi.json", "search", "search/openapi.json", "api/config"):
+        return JSONResponse({"error": "Use the specific route handler"}, status_code=404)
     if request.method == "GET":
         return await proxy_get(f"/{path}")
     else:

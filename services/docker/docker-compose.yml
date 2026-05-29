@@ -31,6 +31,20 @@ services:
               count: all
               capabilities: [gpu]
 
+  searxng:
+    build:
+      context: ../searxng
+      dockerfile: Dockerfile
+    container_name: searxng
+    volumes:
+      - ../../configs/searxng/settings.yml:/etc/searxng/settings.yml
+    ports:
+      - "8888:8080"
+    environment:
+      - SEARXNG_SECRET=ml-stack-searxng-secret
+      - SEARXNG_LIMITER=false
+    restart: unless-stopped
+
   api-webui:
     build:
       context: ../api-webui
@@ -46,8 +60,10 @@ services:
       - OPENAI_API_BASE_URL=http://localhost:8000/v1
       - OPENAI_API_KEY=sk-dummy
       - ENABLE_OLLAMA_API=False
+      - SEARXNG_SERVER=http://searxng:8080
     depends_on:
       - vllm
+      - searxng
     restart: unless-stopped
 
 volumes:

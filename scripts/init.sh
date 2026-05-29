@@ -288,7 +288,7 @@ if [ -n "$DOCKER_CMD" ]; then
   # Docker Compose names images based on the project directory (services/docker/)
   # so the prefix is "docker". e.g. "docker-vllm:latest", "docker-api-webui:latest".
   COMPOSE_PROJECT="docker"
-  for SERVICE in vllm api-webui; do
+  for SERVICE in vllm api-webui searxng; do
     IMAGE="$COMPOSE_PROJECT-$SERVICE"
     if "$DOCKER_CMD" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -q "^${IMAGE}:latest$"; then
       echo "  ✅ $IMAGE:latest"
@@ -311,7 +311,7 @@ fi
 echo ""
 echo "📂 Project structure:"
 
-for dir in models/base models/quantized models/finetuned datasets/raw datasets/processed outputs/evals outputs/runs scripts/utils scripts/eval services/vllm services/api-webui services/docker configs/vllm configs/llama configs/evals configs/runs; do
+for dir in models/base models/quantized models/finetuned datasets/raw datasets/processed outputs/evals outputs/runs scripts/utils scripts/eval services/vllm services/api-webui services/searxng services/docker configs/vllm configs/searxng configs/llama configs/evals configs/runs; do
   if [ -d "$ROOT/$dir" ]; then
     echo "  ✅ $dir/"
   else

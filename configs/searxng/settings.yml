@@ -1,0 +1,14 @@
+use_default_settings: true
+
+server:
+  port: 8080
+  secret_key: "ml-stack-searxng-secret-key-2026"
+  limiter: false
+
+search:
+  formats:
+    - html
+    - json
+
+botdetection:
+  enabled: false
