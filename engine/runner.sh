@@ -41,6 +41,10 @@ case "$ACTION" in
     bash "$ROOT/process-dataset" "$@"
     ;;
 
+  serve-dflash)
+    bash "$ROOT/serve-dflash" "$@"
+    ;;
+
   serve-model)
     bash "$ROOT/serve-model" "$@"
     ;;

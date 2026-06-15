@@ -16,7 +16,7 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 > ([source](https://github.com/Dao-AILab/flash-attention/issues/2442)). Switch between environments
 > with `ml use-training-env`. See [Conda Environments](#conda-environments) for setup.
 
-[⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [🔍 Web Search](#web-search) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization)
+[⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [🔍 Web Search](#web-search) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization) • [Runtimes](#runtimes)
 
 ---
 
@@ -767,6 +767,134 @@ GPU_MEMORY_UTILIZATION=0.85
 MAX_NUM_SEQS=1
 PERFORMANCE_MODE=interactivity
 ```
+
+## Runtimes
+
+Optimized configurations for specific GPU targets, validated with end-to-end benchmarks.
+
+### RTX 5090 — Long-Context Runtime
+
+For workloads with 40–100K context on a single RTX 5090 (32 GB). Combines KVFlash (bounded residency), PFlash (prefill compression), and DFlash DDTree (speculative decode) from [lucebox-hub](runtimes/lucebox-hub/).
+
+**Required models:**
+
+| Model | Path | Purpose | Size |
+|---|---|---|---|
+| Qwen3.6-27B UD-Q5_K_XL | `models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf` | Target model | ~18 GB |
+| DFlash Drafter | `models/drafter/model.safetensors` | Decode speculation | ~3.3 GB |
+| PFlash Drafter | `models/pflash_drafter/Qwen3-0.6B-BF16.gguf` | Prefill compression + KVFlash scoring | ~1.1 GB |
+
+**Quick start:**
+```bash
+ml serve-dflash      # start
+ml serve-dflash --stop    # stop
+ml serve-dflash --restart # restart
+```
+
+**Manual launch:**
+
+```bash
+export DFLASH_FP_USE_BSA=1
+export DFLASH_FP_ALPHA=0.70
+
+cd ~/ml-stack/runtimes/lucebox-hub/server/build
+./dflash_server \
+  ~/ml-stack/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf \
+  --draft ~/ml-stack/models/drafter/model.safetensors \
+  --prefill-drafter ~/ml-stack/models/pflash_drafter/Qwen3-0.6B-BF16.gguf \
+  --ddtree --ddtree-budget 22 \
+  --fa-window 4096 \
+  --max-ctx 262144 \
+  --kvflash 32768 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --prefill-compression auto \
+  --prefill-threshold 32000 \
+  --prefill-keep-ratio 0.05 \
+  --default-max-tokens 1024 \
+  --port 8080
+```
+
+**Why these flags:**
+
+| Flag | Value | Reason |
+|---|---|---|
+| `--kvflash 32768` | 32K pool | Holds most of a 60K context without eviction. `auto` caps at 16K (too small for 50K+ prompts). |
+| `--cache-type-k q8_0` / `--cache-type-v q8_0` | q8_0 | 8-bit quantized KV cache. Faster decode than bf16, better quality than tq3_0. Uses ~3.2 GiB for the 32K pool. |
+| `--prefill-compression auto` | `auto` | Activates at 32K+ tokens via the pflash drafter. Compresses a 96K prefill from 143s → 3.3s. |
+| `--prefill-threshold 32000` | 32000 | PFlash only triggers above this token count. Below, the target runs natively (no overhead). |
+| `--prefill-keep-ratio 0.05` | 0.05 | Keeps 5% of compressed tokens. Balances quality vs. size. |
+| `--fa-window 4096` | 4096 | Sliding attention window. Drops system prompt from attention at long contexts. |
+| `--ddtree-budget 22` | 22 | Tree verify budget. Stable on 5090. |
+| `--default-max-tokens 1024` | 1024 | Response cap. Required for OpenWebUI compatibility. |
+
+**Benchmark results (temperature = 0, 200 output tokens):**
+
+| Context | Prompt Tokens | Decode Speed | Accept Rate | Prefill | Decode | Wall Time | PFlash |
+|---|---|---|---|---|---|---|---|
+| ~8K | 8,035 | 131 tok/s | 87.1% | 4.6s | 1.5s | 6s | off |
+| ~16K | 16,060 | 102 tok/s | 73.8% | 8.6s | 2.0s | 10s | off |
+| ~32K | 31,789 | 88 tok/s | 84.8% | 18.6s | 2.3s | 20s | off |
+| ~52K | 51,752 | 161 tok/s | 87.9% | 2.8s | 1.2s | 39s | on |
+| ~96K | 95,544 | 137 tok/s | 87.5% | 3.3s | 1.5s | 41s | on |
+
+Prefill at 52K+ is 40x faster with PFlash (143s → 3s). PFlash compresses the prompt through the drafter (~5% retained), so the target model only sees a few thousand tokens instead of 95K.
+
+**In multi-turn conversations**, prefix caching makes every turn after the first nearly instant:
+
+| Turn | Context | Prefill (cached) | Decode | Total |
+|---|---|---|---|---|
+| First (60K) | 51,752 tokens | 2.8s (PFlash) | 1.2s | ~39s* |
+| Second+ (cached) | same 60K + new delta | <0.1s (prefix cache) | 1.2s | ~1.3s |
+
+*The drafter does a one-time full pass over the context for PFlash compression. Subsequent turns skip this entirely.
+
+**Frontend proxy (for OpenWebUI):**
+
+Spec decode requires `temperature=0` and `top_p=1` (any other value disables the draft-verify alignment). The `services/api-webui/proxy.env` file forces these defaults:
+
+```
+# proxy.env
+DEFAULT_MAX_TOKENS=1024
+DEFAULT_TEMPERATURE=0
+DEFAULT_TOP_P=1
+```
+
+**vs. 16K pool:** the 32K pool is 15-30% slower at short prompts but 2-5x faster at 40K+ context. For long-context serving, use 32K. For pure short-prompt serving, use `--kvflash auto` (16K on 5090).
+
+**vs. vLLM MTP:** at short contexts, comparable (~130-160 tok/s). At 50K+ context, dflash+PFlash wins (vLLM MTP's multi-token advantage is negated by full-attention forward pass cost).
+
+### Local GGUF Serving — llama.cpp
+
+For lightweight local serving without Docker, use llama.cpp to run quantized GGUF models directly on your GPU. Models are first registered via `ml add-model`, then served with a single command.
+
+**Quick start:**
+```bash
+ml serve-model <family> <variant>
+```
+
+For example:
+```bash
+ml serve-model qwen qwen3.6-27b-gguf
+```
+
+The script reads the model registry, resolves the `.gguf` file path, and launches `llama-server` from `runtimes/llama.cpp/`. Active state is tracked in `llama/` so `claude-local` and other tools can auto-detect the running server.
+
+**VRAM safety:** Before launching, `serve-model` checks if the vLLM Docker container is running and will warn you — running both simultaneously on a consumer GPU will exceed VRAM.
+
+**Why use llama.cpp vs. dflash:**
+
+| | llama.cpp | dflash (KVFlash + PFlash) |
+|---|---|---|
+| Best for | Short prompts, interactive chat, lightweight setups | Long context (40K+) |
+| Setup | Single command, no Docker | Multiple model files, env config |
+| Speculative decode | Basic (mtp/draft) | DDTree with high accept rates |
+| Prefill compression | None | PFlash (40x speedup at 96K) |
+| KV flash/paging | None | 32K pool with host RAM spillover |
+
+For workloads that build up long context over time, dflash is the better choice. For quick local serving or short conversations, llama.cpp is simpler to set up.
+
+See [Serving Models](#serving-models) for `serve-model` flags and [Claude Local](#claude-local) for auto-detection details.
 
 ## 📦 Dependencies
 

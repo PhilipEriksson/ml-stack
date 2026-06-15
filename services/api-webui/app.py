@@ -10,34 +10,63 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="ML Stack API", openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-LLM_SERVER = os.getenv("LLM_SERVER", "http://vllm-server:8000")
 SEARXNG_SERVER = os.getenv("SEARXNG_SERVER", "")
+
+# Support multiple backends - comma-separated list of base URLs
+# The proxy tries each one and uses the first that responds
+_LLM_SERVERS_STR = os.getenv("LLM_SERVERS", os.getenv("LLM_SERVER", "http://vllm-server:8000"))
+_LLM_SERVERS = [s.strip() for s in _LLM_SERVERS_STR.split(",") if s.strip()]
+
+import logging
+logger = logging.getLogger("uvicorn")
+
+# Cached: the first available server from startup
+_active_server: str | None = None
+
+
+async def get_active_server() -> str | None:
+    """Return the first LLM server that responds to /v1/models."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        for server in _LLM_SERVERS:
+            try:
+                r = await client.get(f"{server}/v1/models")
+                if r.status_code == 200:
+                    return server
+            except Exception:
+                pass
+    return None
 
 
 async def proxy_get(path):
+    server = await get_active_server()
+    if not server:
+        return JSONResponse({"error": "No LLM server available"}, status_code=503)
     async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.get(f"{LLM_SERVER}{path}")
+        resp = await client.get(f"{server}{path}")
         return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
 
-async def _stream_chunks(path, payload):
-    """Stream from vLLM, yielding text chunks for proper media_type handling."""
+async def _stream_chunks(path, payload, server):
+    """Stream from an LLM server, yielding text chunks for proper media_type handling."""
     async with httpx.AsyncClient(timeout=300) as client:
-        async with client.stream("POST", f"{LLM_SERVER}{path}", json=payload) as resp:
+        async with client.stream("POST", f"{server}{path}", json=payload) as resp:
             async for chunk in resp.aiter_text():
                 yield chunk
 
 
 async def proxy_post(path, payload=None, stream=False):
+    server = await get_active_server()
+    if not server:
+        return JSONResponse({"error": "No LLM server available"}, status_code=503)
     if stream:
         return StreamingResponse(
-            _stream_chunks(path, payload),
+            _stream_chunks(path, payload, server),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
 
     async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.post(f"{LLM_SERVER}{path}", json=payload)
+        resp = await client.post(f"{server}{path}", json=payload)
         return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
 
@@ -245,9 +274,27 @@ async def models():
     return await proxy_get("/v1/models")
 
 
+# Read optional defaults from environment (e.g. DEFAULT_MAX_TOKENS=1024)
+_CHAT_DEFAULTS = {
+    "max_tokens":         os.environ.get("DEFAULT_MAX_TOKENS"),
+    "temperature":        os.environ.get("DEFAULT_TEMPERATURE"),
+    "top_p":              os.environ.get("DEFAULT_TOP_P"),
+    "presence_penalty":   os.environ.get("DEFAULT_PRESENCE_PENALTY"),
+    "frequency_penalty":  os.environ.get("DEFAULT_FREQUENCY_PENALTY"),
+}
+
+
+def _apply_defaults(payload: dict):
+    """Apply configured defaults — always override (needed for spec decode)."""
+    for key, val in _CHAT_DEFAULTS.items():
+        if val is not None:
+            payload[key] = float(val) if val.replace(".", "", 1).replace("-", "", 1).isdigit() else int(val)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     payload = await request.json()
+    _apply_defaults(payload)
     return await proxy_post("/v1/chat/completions", payload, stream=payload.get("stream", False))
 
 
@@ -263,8 +310,12 @@ async def responses(request: Request):
     chat_payload = responses_to_chat(payload)
     chat_payload.pop("stream", None)
 
+    server = await get_active_server()
+    if not server:
+        return JSONResponse({"error": "No LLM server available"}, status_code=503)
+
     async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.post(f"{LLM_SERVER}/v1/chat/completions", json=chat_payload)
+        resp = await client.post(f"{server}/v1/chat/completions", json=chat_payload)
         result = resp.json()
         return JSONResponse(content=chat_to_responses(result), status_code=resp.status_code)
 

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+
+set -e
+
+SERVER_DIR="${ML_STACK_HOME:-$HOME/ml-stack}/runtimes/lucebox-hub/server/build"
+LOG_FILE="/tmp/dflash.log"
+
+if [ "$1" = "--stop" ]; then
+  pkill -f "dflash_server" 2>/dev/null && echo "dflash_server stopped" || echo "dflash_server not running"
+  exit 0
+fi
+
+# Check for a running instance
+if pgrep -f "dflash_server" > /dev/null 2>&1; then
+  echo "dflash_server is already running"
+  if [ "$1" = "--restart" ]; then
+    echo "Restarting..."
+    pkill -f "dflash_server" 2>/dev/null
+    sleep 3
+  else
+    exit 0
+  fi
+fi
+
+cd "$SERVER_DIR"
+
+# BSA environment variables
+export DFLASH_FP_USE_BSA=1
+export DFLASH_FP_ALPHA=0.70
+
+# Load user-tunable defaults
+set -a
+source server.env 2>/dev/null || true
+set +a
+
+echo "Starting dflash_server with 32K KVFlash pool + PFlash..."
+
+nohup ./dflash_server \
+    "${DFLASH_MODEL:-/home/px5090/ml-stack/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf}" \
+    --draft "${DFLASH_DRAFT:-/home/px5090/ml-stack/models/drafter/model.safetensors}" \
+    --ddtree \
+    --ddtree-budget "${DFLASH_DDTREE_BUDGET:-22}" \
+    --fa-window "${DFLASH_FA_WINDOW:-4096}" \
+    --max-ctx "${DFLASH_MAX_CTX:-262144}" \
+    --kvflash "${DFLASH_KVFLASH:-32768}" \
+    --kvflash-tau "${DFLASH_KVFLASH_TAU:-64}" \
+    --cache-type-k "${DFLASH_CACHE_TYPE:-q8_0}" \
+    --cache-type-v "${DFLASH_CACHE_TYPE:-q8_0}" \
+    --prefill-compression "${DFLASH_PREFILL_COMPRESSION:-auto}" \
+    --prefill-threshold "${DFLASH_PREFILL_THRESHOLD:-32000}" \
+    --prefill-keep-ratio "${DFLASH_PREFILL_KEEP_RATIO:-0.05}" \
+    --prefill-drafter "${DFLASH_PREFILL_DRAFTER:-/home/px5090/ml-stack/models/pflash_drafter/Qwen3-0.6B-BF16.gguf}" \
+    --default-max-tokens "${DFLASH_DEFAULT_MAX_TOKENS:-1024}" \
+    --port "${DFLASH_PORT:-8080}" > "$LOG_FILE" 2>&1 &
+
+echo "PID: $!"
+echo "Logs: $LOG_FILE"
+echo "Waiting for server to start..."
+
+for i in $(seq 1 20); do
+  if curl -s http://localhost:8080/v1/models > /dev/null 2>&1; then
+    echo "dflash_server is ready on port 8080"
+    echo "Config:"
+    grep -E "kvflash|pflash|ddtree|fa_window" "$LOG_FILE" | head -5
+    exit 0
+  fi
+  sleep 3
+done
+
+echo "Server did not start in time. Check $LOG_FILE for errors"
+exit 1
