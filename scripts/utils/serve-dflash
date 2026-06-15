@@ -51,15 +51,15 @@ nohup ./dflash_server \
     --prefill-keep-ratio "${DFLASH_PREFILL_KEEP_RATIO:-0.05}" \
     --prefill-drafter "${DFLASH_PREFILL_DRAFTER:-/home/px5090/ml-stack/models/pflash_drafter/Qwen3-0.6B-BF16.gguf}" \
     --default-max-tokens "${DFLASH_DEFAULT_MAX_TOKENS:-1024}" \
-    --port "${DFLASH_PORT:-8080}" > "$LOG_FILE" 2>&1 &
+    --port "${DFLASH_PORT:-8000}" > "$LOG_FILE" 2>&1 &
 
 echo "PID: $!"
 echo "Logs: $LOG_FILE"
 echo "Waiting for server to start..."
 
 for i in $(seq 1 20); do
-  if curl -s http://localhost:8080/v1/models > /dev/null 2>&1; then
-    echo "dflash_server is ready on port 8080"
+  if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
+    echo "dflash_server is ready on port 8000"
     echo "Config:"
     grep -E "kvflash|pflash|ddtree|fa_window" "$LOG_FILE" | head -5
     exit 0

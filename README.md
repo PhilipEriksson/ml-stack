@@ -812,7 +812,7 @@ cd ~/ml-stack/runtimes/lucebox-hub/server/build
   --prefill-threshold 32000 \
   --prefill-keep-ratio 0.05 \
   --default-max-tokens 1024 \
-  --port 8080
+  --port 8000
 ```
 
 **Why these flags:**

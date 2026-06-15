@@ -33,7 +33,12 @@ if [ -z "$MODEL_NAME" ] && [ -f "$ROOT/configs/vllm/.active-vllm" ]; then
   fi
 fi
 
-# --- 3. Try llama.cpp (running) ---
+# --- 3. Try dflash_server (running) ---
+if [ -z "$MODEL_NAME" ] && pgrep -f "dflash_server" &>/dev/null; then
+  MODEL_NAME="Qwen3.6-27B-UD-Q5_K_XL"
+fi
+
+# --- 4. Try llama.cpp (running) ---
 if [ -z "$MODEL_NAME" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
   ACTIVE=$(cat "$ROOT/configs/llama/.active-llama")
   FAM=$(echo "$ACTIVE" | cut -d/ -f1)
@@ -50,11 +55,12 @@ if [ -z "$MODEL_NAME" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
   fi
 fi
 
-# --- 4. No backend found ---
+# --- 5. No backend found ---
 if [ -z "$MODEL_NAME" ]; then
   echo "⚠️  No active inference backend detected."
-  echo "   Start vLLM:  docker compose -f services/docker/docker-compose.yml up -d vllm"
-  echo "   Start GGUF:  ml serve-model <family> <variant>"
+  echo "   Start vLLM:   docker compose -f services/docker/docker-compose.yml up -d vllm"
+  echo "   Start dflash: ml serve-dflash"
+  echo "   Start GGUF:   ml serve-model <family> <variant>"
   exit 1
 fi
 
