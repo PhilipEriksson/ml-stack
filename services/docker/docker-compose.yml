@@ -58,7 +58,7 @@ services:
       - "8000:8000"
       - "3000:8080"
     environment:
-      - LLM_SERVERS=http://host.docker.internal:8000,http://host.docker.internal:8080,http://vllm-server:8000
+      - LLM_SERVERS=http://host.docker.internal:8080,http://host.docker.internal:8000,http://vllm-server:8000
       - OPENAI_API_BASE_URL=http://localhost:8000/v1
       - OPENAI_API_KEY=sk-dummy
       - ENABLE_OLLAMA_API=False

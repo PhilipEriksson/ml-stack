@@ -98,10 +98,11 @@ show_help() {
 
     serve-dflash)
       echo "ml serve-dflash"
-      echo "  Starts the dflash_server with KVFlash (32K pool) + PFlash + DFlash DDTree for long-context agentic work"
+      echo "  Starts the dflash_server with KVFlash (32K pool) + PFlash + DFlash DDTree for long-context serving"
       echo "  Usage: ml serve-dflash"
       echo "         ml serve-dflash --stop       stop the server"
-      echo "  Launches on port 8080. Configure via server/build/server.env"
+      echo "         ml serve-dflash --restart    restart the server"
+      echo "  Launches on port 8080 (Docker proxy routes to it automatically). Configure via configs/dflash/server.env"
       echo "  Prefix caching makes multi-turn conversations ~1.3s/turn after first cold start"
       ;;
 

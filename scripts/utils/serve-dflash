@@ -2,7 +2,9 @@
 
 set -e
 
-SERVER_DIR="${ML_STACK_HOME:-$HOME/ml-stack}/runtimes/lucebox-hub/server/build"
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+SERVER_DIR="$ROOT/runtimes/lucebox-hub/server/build"
+CONFIG_FILE="$ROOT/configs/dflash/server.env"
 LOG_FILE="/tmp/dflash.log"
 
 if [ "$1" = "--stop" ]; then
@@ -22,22 +24,30 @@ if pgrep -f "dflash_server" > /dev/null 2>&1; then
   fi
 fi
 
-cd "$SERVER_DIR"
+# Check required files exist
+if [ ! -f "$SERVER_DIR/dflash_server" ]; then
+  echo "❌ dflash_server binary not found at $SERVER_DIR/dflash_server"
+  echo "   See README Runtimes section for build instructions"
+  exit 1
+fi
 
 # BSA environment variables
 export DFLASH_FP_USE_BSA=1
 export DFLASH_FP_ALPHA=0.70
 
+# Ensure conda dflash libs are found (binary built inside 'dflash' conda env)
+export LD_LIBRARY_PATH="/home/px5090/miniconda3/envs/dflash/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 # Load user-tunable defaults
 set -a
-source server.env 2>/dev/null || true
+source "$CONFIG_FILE" 2>/dev/null || true
 set +a
 
 echo "Starting dflash_server with 32K KVFlash pool + PFlash..."
 
-nohup ./dflash_server \
-    "${DFLASH_MODEL:-/home/px5090/ml-stack/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf}" \
-    --draft "${DFLASH_DRAFT:-/home/px5090/ml-stack/models/drafter/model.safetensors}" \
+nohup "$SERVER_DIR/dflash_server" \
+    "${DFLASH_MODEL:-$ROOT/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf}" \
+    --draft "${DFLASH_DRAFT:-$ROOT/models/drafter/model.safetensors}" \
     --ddtree \
     --ddtree-budget "${DFLASH_DDTREE_BUDGET:-22}" \
     --fa-window "${DFLASH_FA_WINDOW:-4096}" \
@@ -49,17 +59,17 @@ nohup ./dflash_server \
     --prefill-compression "${DFLASH_PREFILL_COMPRESSION:-auto}" \
     --prefill-threshold "${DFLASH_PREFILL_THRESHOLD:-32000}" \
     --prefill-keep-ratio "${DFLASH_PREFILL_KEEP_RATIO:-0.05}" \
-    --prefill-drafter "${DFLASH_PREFILL_DRAFTER:-/home/px5090/ml-stack/models/pflash_drafter/Qwen3-0.6B-BF16.gguf}" \
+    --prefill-drafter "${DFLASH_PREFILL_DRAFTER:-$ROOT/models/pflash_drafter/Qwen3-0.6B-BF16.gguf}" \
     --default-max-tokens "${DFLASH_DEFAULT_MAX_TOKENS:-1024}" \
-    --port "${DFLASH_PORT:-8000}" > "$LOG_FILE" 2>&1 &
+    --port "${DFLASH_PORT:-8080}" > "$LOG_FILE" 2>&1 &
 
 echo "PID: $!"
 echo "Logs: $LOG_FILE"
 echo "Waiting for server to start..."
 
 for i in $(seq 1 20); do
-  if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
-    echo "dflash_server is ready on port 8000"
+  if curl -s http://localhost:${DFLASH_PORT:-8080}/v1/models > /dev/null 2>&1; then
+    echo "dflash_server is ready on port ${DFLASH_PORT:-8080}"
     echo "Config:"
     grep -E "kvflash|pflash|ddtree|fa_window" "$LOG_FILE" | head -5
     exit 0

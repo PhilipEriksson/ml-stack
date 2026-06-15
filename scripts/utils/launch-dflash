@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -e
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+SERVER_DIR="$ROOT/runtimes/lucebox-hub/server/build"
+CONFIG_FILE="$ROOT/configs/dflash/server.env"
+
+cd "$SERVER_DIR" || { echo "❌ Server directory not found: $SERVER_DIR"; exit 1; }
+
+# BSA environment variables (compiled with -DDFLASH27B_ENABLE_BSA=ON)
+export DFLASH_FP_USE_BSA=1
+export DFLASH_FP_ALPHA=0.70
+
+# Conda dflash build env libraries (required for CUDA 13 runtime)
+export LD_LIBRARY_PATH="/home/px5090/miniconda3/envs/dflash/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Ensure conda dflash libs are found (binary built inside 'dflash' conda env)
+export LD_LIBRARY_PATH="/home/px5090/miniconda3/envs/dflash/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Load user-tunable defaults (edit configs/dflash/server.env to change)
+set -a
+source "$CONFIG_FILE" 2>/dev/null || true
+set +a
+
+exec ./dflash_server \
+    "${DFLASH_MODEL:-$ROOT/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf}" \
+    --draft "${DFLASH_DRAFT:-$ROOT/models/drafter/model.safetensors}" \
+    --ddtree \
+    --ddtree-budget "${DFLASH_DDTREE_BUDGET:-22}" \
+    --fa-window "${DFLASH_FA_WINDOW:-4096}" \
+    --max-ctx "${DFLASH_MAX_CTX:-262144}" \
+    --kvflash "${DFLASH_KVFLASH:-32768}" \
+    --kvflash-tau "${DFLASH_KVFLASH_TAU:-64}" \
+    --cache-type-k "${DFLASH_CACHE_TYPE:-q8_0}" \
+    --cache-type-v "${DFLASH_CACHE_TYPE:-q8_0}" \
+    --prefill-compression "${DFLASH_PREFILL_COMPRESSION:-auto}" \
+    --prefill-threshold "${DFLASH_PREFILL_THRESHOLD:-32000}" \
+    --prefill-keep-ratio "${DFLASH_PREFILL_KEEP_RATIO:-0.05}" \
+    --prefill-drafter "${DFLASH_PREFILL_DRAFTER:-$ROOT/models/pflash_drafter/Qwen3-0.6B-BF16.gguf}" \
+    --default-max-tokens "${DFLASH_DEFAULT_MAX_TOKENS:-1024}" \
+    --port "${DFLASH_PORT:-8080}"

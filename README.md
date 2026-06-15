@@ -115,6 +115,7 @@ Open `http://localhost:3000` for the Open WebUI.
 │   └── ml
 ├── configs/            ← JSON registries and configuration files
 │   ├── datasets/       ← dataset registry
+│   ├── dflash/         ← dflash_server environment config (server.env)
 │   ├── evals/          ← benchmark eval registry (created on first `ml eval`)
 │   ├── llama/          ← active llama.cpp model state (created by `serve-model`)
 │   ├── models/         ← model registry (used by `serve-model`)
@@ -776,6 +777,28 @@ Optimized configurations for specific GPU targets, validated with end-to-end ben
 
 For workloads with 40–100K context on a single RTX 5090 (32 GB). Combines KVFlash (bounded residency), PFlash (prefill compression), and DFlash DDTree (speculative decode) from [lucebox-hub](runtimes/lucebox-hub/).
 
+**Prerequisites:**
+
+1. Clone the lucebox-hub repo into `runtimes/`:
+```bash
+cd ~/ml-stack/runtimes
+git clone https://github.com/Luce-Org/lucebox-hub.git
+cd lucebox-hub
+git submodule update --init --recursive
+```
+2. Build the server (follow [runtimes/lucebox-hub/README.md](runtimes/lucebox-hub/README.md) for cmake/dependencies):
+```bash
+conda create -n dflash -y "gcc=15" cuda-toolkit ninja cmake make && conda activate dflash
+
+cd ~/ml-stack/runtimes/lucebox-hub/server
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DDFLASH27B_ENABLE_BSA=ON -DCMAKE_CUDA_ARCHITECTURES="120"
+make -j$(nproc)
+```
+3. Download the required drafter models (see table below).
+
+**Required models:**
+
 **Required models:**
 
 | Model | Path | Purpose | Size |
@@ -797,6 +820,11 @@ ml serve-dflash --restart # restart
 export DFLASH_FP_USE_BSA=1
 export DFLASH_FP_ALPHA=0.70
 
+# Required: conda dflash build env libraries (CUDA 13 runtime)
+export LD_LIBRARY_PATH="/home/px5090/miniconda3/envs/dflash/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+source ~/ml-stack/configs/dflash/server.env
+
 cd ~/ml-stack/runtimes/lucebox-hub/server/build
 ./dflash_server \
   ~/ml-stack/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf \
@@ -812,10 +840,12 @@ cd ~/ml-stack/runtimes/lucebox-hub/server/build
   --prefill-threshold 32000 \
   --prefill-keep-ratio 0.05 \
   --default-max-tokens 1024 \
-  --port 8000
+  --port 8080
 ```
 
 **Why these flags:**
+
+All values are set in `configs/dflash/server.env` — edit that file to adjust defaults.
 
 | Flag | Value | Reason |
 |---|---|---|
