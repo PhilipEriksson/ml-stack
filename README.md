@@ -726,12 +726,12 @@ sudo nvidia-smi -pl 575
 | Target Power | Use Case | Performance Impact |
 |---|---|---|
 | 575W (default) | Max throughput (training, large batch evals) | 100% baseline |
-| **400W** | **Recommended — optimal performance-per-watt** | **~2-5% slower, drastic power savings** |
 | 450W | Balanced — good for serving with lower noise | ~5-10% slower token gen |
+| 400W | Lower power — pairs well with undervolting | ~7-12% slower alone |
 | 350W | Silent/quiet — good for interactivity, idle serving | ~10-15% slower |
 | 250W | Battery/ultra-quiet — sacrifices throughput for power | ~20-25% slower |
 
-> **Recommendation:** Cap power at **400W** for optimal performance-per-watt. The RTX 5090 hits diminishing returns well before its 575W TDP — 400W retains near-default boost clocks while cutting power draw and thermals significantly.
+> **Recommendation:** Cap power at **400W** and combine with undervolting (see below). The power limit alone gives a modest hit, but adding undervolting keeps boost clocks near-default while cutting thermals and draw significantly — the combination is where the real benefit is.
 
 **Make power limit persistent (WSL2):**
 ```bash
@@ -761,7 +761,7 @@ For advanced users, undervolting delivers near-default performance with signific
 - **Core voltage cap:** `875 mV` at `2827 MHz`
 - This retains boost clocks close to the default while dramatically reducing power consumption and temperatures
 
-> Undervolting is best done from the Windows host using **[MSI Afterburner](https://www.msi.com/Liqud-X/Afterburner)** — open the Tweaker tab, go to Settings (gear icon), raise the voltage limit ceiling, then drag individual voltage/frequency curve points down. Set the target point to `875 mV @ 2827 MHz` and flatten all higher-frequency points to the same voltage. Apply, save to profile, and verify stability under load.
+> Undervolting is best done from the Windows host using **[MSI Afterburner](https://www.msi.com/Liqud-X/Afterburner)** — open the Tweaker tab, go to Settings (gear icon), raise the voltage limit ceiling, then drag individual voltage/frequency curve points down. Set the target point to `875 mV @ 2827 MHz` and flatten all higher-frequency points to the same voltage. In the Tweaker tab, set the **Power Limit** slider to **69%** (≈ 400W on the RTX 5090) to cap power without `nvidia-smi`. Apply, save to profile, and verify stability under load.
 
 ### vLLM Settings for RTX 5090
 
