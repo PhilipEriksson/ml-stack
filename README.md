@@ -726,16 +726,17 @@ sudo nvidia-smi -pl 575
 | Target Power | Use Case | Performance Impact |
 |---|---|---|
 | 575W (default) | Max throughput (training, large batch evals) | 100% baseline |
+| **400W** | **Recommended — optimal performance-per-watt** | **~2-5% slower, drastic power savings** |
 | 450W | Balanced — good for serving with lower noise | ~5-10% slower token gen |
 | 350W | Silent/quiet — good for interactivity, idle serving | ~10-15% slower |
 | 250W | Battery/ultra-quiet — sacrifices throughput for power | ~20-25% slower |
 
-> **Note:** Lower power limits reduce the boost clock frequency. For interactive use (single requests, chat), 350W-450W feels nearly as fast as 575W while running much cooler and quieter.
+> **Recommendation:** Cap power at **400W** for optimal performance-per-watt. The RTX 5090 hits diminishing returns well before its 575W TDP — 400W retains near-default boost clocks while cutting power draw and thermals significantly.
 
 **Make power limit persistent (WSL2):**
 ```bash
 # Add to ~/.bashrc or a systemd service
-sudo nvidia-smi -pl 450
+sudo nvidia-smi -pl 400
 ```
 
 ### Clock Speed Management
@@ -751,6 +752,16 @@ sudo nvidia-smi -lgc 2000
 # Remove clock limit
 sudo nvidia-smi -lgc 0
 ```
+
+### Undervolting (Advanced)
+
+For advanced users, undervolting delivers near-default performance with significantly lower power draw and thermals than even the 400W power limit alone.
+
+**Recommended starting point for RTX 5090:**
+- **Core voltage cap:** `875 mV` at `2827 MHz`
+- This retains boost clocks close to the default while dramatically reducing power consumption and temperatures
+
+> Undervolting is best done from the Windows host using **[MSI Afterburner](https://www.msi.com/Liqud-X/Afterburner)** — open the Tweaker tab, go to Settings (gear icon), raise the voltage limit ceiling, then drag individual voltage/frequency curve points down. Set the target point to `875 mV @ 2827 MHz` and flatten all higher-frequency points to the same voltage. Apply, save to profile, and verify stability under load.
 
 ### vLLM Settings for RTX 5090
 
@@ -792,7 +803,7 @@ conda create -n dflash -y "gcc=15" cuda-toolkit ninja cmake make && conda activa
 
 cd ~/ml-stack/runtimes/lucebox-hub/server
 mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DDFLASH27B_ENABLE_BSA=ON -DCMAKE_CUDA_ARCHITECTURES="120"
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=120 -DDFLASH27B_USER_CUDA_ARCHITECTURES=120 -DDFLASH27B_ENABLE_BSA=ON
 make -j$(nproc)
 ```
 3. Download the required drafter models (see table below).
@@ -858,27 +869,6 @@ All values are set in `configs/dflash/server.env` — edit that file to adjust d
 | `--ddtree-budget 22` | 22 | Tree verify budget. Stable on 5090. |
 | `--default-max-tokens 1024` | 1024 | Response cap. Required for OpenWebUI compatibility. |
 
-**Benchmark results (temperature = 0, 200 output tokens):**
-
-| Context | Prompt Tokens | Decode Speed | Accept Rate | Prefill | Decode | Wall Time | PFlash |
-|---|---|---|---|---|---|---|---|
-| ~8K | 8,035 | 131 tok/s | 87.1% | 4.6s | 1.5s | 6s | off |
-| ~16K | 16,060 | 102 tok/s | 73.8% | 8.6s | 2.0s | 10s | off |
-| ~32K | 31,789 | 88 tok/s | 84.8% | 18.6s | 2.3s | 20s | off |
-| ~52K | 51,752 | 161 tok/s | 87.9% | 2.8s | 1.2s | 39s | on |
-| ~96K | 95,544 | 137 tok/s | 87.5% | 3.3s | 1.5s | 41s | on |
-
-Prefill at 52K+ is 40x faster with PFlash (143s → 3s). PFlash compresses the prompt through the drafter (~5% retained), so the target model only sees a few thousand tokens instead of 95K.
-
-**In multi-turn conversations**, prefix caching makes every turn after the first nearly instant:
-
-| Turn | Context | Prefill (cached) | Decode | Total |
-|---|---|---|---|---|
-| First (60K) | 51,752 tokens | 2.8s (PFlash) | 1.2s | ~39s* |
-| Second+ (cached) | same 60K + new delta | <0.1s (prefix cache) | 1.2s | ~1.3s |
-
-*The drafter does a one-time full pass over the context for PFlash compression. Subsequent turns skip this entirely.
-
 **Frontend proxy (for OpenWebUI):**
 
 Spec decode requires `temperature=0` and `top_p=1` (any other value disables the draft-verify alignment). The `services/api-webui/proxy.env` file forces these defaults:
@@ -889,10 +879,6 @@ DEFAULT_MAX_TOKENS=1024
 DEFAULT_TEMPERATURE=0
 DEFAULT_TOP_P=1
 ```
-
-**vs. 16K pool:** the 32K pool is 15-30% slower at short prompts but 2-5x faster at 40K+ context. For long-context serving, use 32K. For pure short-prompt serving, use `--kvflash auto` (16K on 5090).
-
-**vs. vLLM MTP:** at short contexts, comparable (~130-160 tok/s). At 50K+ context, dflash+PFlash wins (vLLM MTP's multi-token advantage is negated by full-attention forward pass cost).
 
 ### Local GGUF Serving — llama.cpp
 
