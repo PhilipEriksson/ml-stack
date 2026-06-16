@@ -757,7 +757,7 @@ sudo nvidia-smi -lgc 0
 
 For advanced users, undervolting delivers near-default performance with significantly lower power draw and thermals than even the 400W power limit alone.
 
-**Recommended starting point for RTX 5090:**
+**Suggested starting point for RTX 5090:**
 - **Core voltage cap:** `875 mV` at `2827 MHz`
 - This retains boost clocks close to the default while dramatically reducing power consumption and temperatures
 
