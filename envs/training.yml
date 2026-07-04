@@ -10,7 +10,7 @@ dependencies:
   - pip
   - pip:
       - huggingface_hub
-      - transformers==4.44.0
+      - transformers>=4.44.0
       - datasets==2.21.0
       - accelerate==0.33.0
       - peft==0.12.0

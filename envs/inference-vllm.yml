@@ -10,5 +10,5 @@ dependencies:
   - pip
   - pip:
       - vllm==0.20.1
-      - transformers==4.44.0
+      - transformers>=4.44.0
       - accelerate==0.33.0

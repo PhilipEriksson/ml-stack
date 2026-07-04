@@ -50,6 +50,36 @@ A local machine learning stack for model inference, fine-tuning, and evaluation.
 | `huggingface_hub` (hf CLI) | Model/dataset downloads (`pip install huggingface_hub`) |
 | `lm-eval` | Benchmarking (`pip install 'lm-eval[multitask]'`) |
 
+### NVIDIA Drivers
+
+**Windows / WSL2 — NVIDIA App (Recommended)**
+
+Install the **[NVIDIA App](https://www.nvidia.com/en-us/drivers/nvidia-app/)** (or the legacy GeForce driver installer) — both provide the correct driver with CUDA support. On WSL2, the driver is shared with the Windows host, so no additional setup is needed inside WSL2.
+
+**Linux (Ubuntu) — Open Kernel Module**
+
+On Ubuntu 24.04+ with RTX 50-series (Blackwell), the open kernel module (`nvidia-driver-open`) is required for driver stability. The proprietary/proprietary-open drivers may fail to detect the GPU.
+
+```bash
+# Ensure Secure Boot is disabled (required for open driver on fresh installs)
+# Check current driver status
+ubuntu-drivers devices
+
+# Install the open driver
+sudo apt install nvidia-driver-open
+
+# After reboot, verify
+nvidia-smi
+```
+
+For CUDA, install the toolkit from your distro's repos (e.g. `cuda-toolkit-13` for CUDA 13.x) and add to your `~/.bashrc`:
+```bash
+export PATH="/usr/local/cuda-13.3/bin:$PATH"
+export LD_LIBRARY_PATH="/usr/local/cuda-13.3/lib64:${LD_LIBRARY_PATH}"
+```
+
+**Troubleshooting:** If `nvidia-smi` shows no GPU or returns "No devices found," switch to `nvidia-driver-open` (see above). On systems without an iGPU, you cannot enroll MOK keys at boot (no display), so either disable Secure Boot or use the open driver which doesn't require key enrollment.
+
 ---
 
 ## 🚀 Quick Start
@@ -436,6 +466,39 @@ The `serve-model` script reads this registry to resolve the model path, type, an
 
 ## 🐳 Docker Services
 
+### Docker Setup
+
+Choose the Docker setup that matches your OS:
+
+**Windows / WSL2 — Docker Desktop (Recommended)**
+
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) for Windows, enable the WSL2 backend, and make sure the NVIDIA GPU is toggled on in Settings → General. Docker Desktop handles GPU passthrough automatically on WSL2 — no manual configuration needed.
+
+**Linux Native — Docker Engine + NVIDIA Container Toolkit**
+
+Install Docker Engine from your distribution's repos and the NVIDIA Container Toolkit for GPU passthrough:
+```bash
+# Ubuntu/Debian
+sudo apt install docker.io nvidia-container-toolkit
+sudo systemctl enable --now docker
+# Configure nvidia as the default runtime
+sudo mkdir -p /etc/docker
+echo '{"runtimes":{"nvidia":{"path":"nvidia-container-runtime","args":[]}}}' | sudo tee /etc/docker/daemon.json
+sudo systemctl restart docker
+```
+For a terminal-based UI to manage containers (alternative to Docker Desktop's GUI), install **[LazyDocker](https://github.com/jesseduffield/lazydocker)**:
+```bash
+# Download the latest release
+LATEST=$(curl -s https://api.github.com/repos/jesseduffield/lazydocker/releases/latest | grep -oP '"tag_name":\K[^"]+')
+curl -L https://github.com/jesseduffield/lazydocker/releases/download/${LATEST}/lazydocker_${LATEST#v}_Linux_x86_64.tar.gz | tar xz
+sudo mv lazydocker /usr/local/bin/
+lazydocker --version
+```
+
+**Docker Desktop on Linux (Optional)**
+
+Docker Desktop is also available for Linux and works as a drop-in replacement. If you prefer the GUI, install it from [docker.com](https://www.docker.com/products/docker-desktop/) — the NVIDIA Container Toolkit is still required for GPU access.
+
 ### Auto-Start with Windows Task Scheduler
 
 On WSL2, Docker containers don't survive a reboot. To auto-start vLLM and API+WebUI on login, create two scheduled tasks in Windows:
@@ -715,11 +778,13 @@ The RTX 5090 has a 575W TDP by default. For quieter, cooler operation (especiall
 nvidia-smi -q | grep "Power"
 
 # Set a custom power limit (watts)
-sudo nvidia-smi -pl 350
+sudo nvidia-smi -pl 400
 
 # Reset to default
 sudo nvidia-smi -pl 575
 ```
+
+**Recommended:** **400W** is the best everyday power limit on both Linux and Windows — noticeably cooler and quieter with only a minor performance hit (~7-12%). The 400W floor is hardware-enforced on both platforms. On Windows/WSL2 you can combine it with undervolting (MSI Afterburner) for better performance-per-watt. On Linux, `nvidia-smi` doesn't expose voltage curves.
 
 **Common power profiles:**
 
@@ -727,15 +792,13 @@ sudo nvidia-smi -pl 575
 |---|---|---|
 | 575W (default) | Max throughput (training, large batch evals) | 100% baseline |
 | 450W | Balanced — good for serving with lower noise | ~5-10% slower token gen |
-| 400W | Lower power — pairs well with undervolting | ~7-12% slower alone |
-| 350W | Silent/quiet — good for interactivity, idle serving | ~10-15% slower |
-| 250W | Battery/ultra-quiet — sacrifices throughput for power | ~20-25% slower |
+| 400W **(recommended)** | Best overall — quiet serving, minimal perf loss | ~7-12% slower alone |
 
-> **Recommendation:** Cap power at **400W** and combine with undervolting (see below). The power limit alone gives a modest hit, but adding undervolting keeps boost clocks near-default while cutting thermals and draw significantly — the combination is where the real benefit is.
+> **Note:** The RTX 5090's minimum power limit is **400W** (hardware-enforced on both Linux and Windows). On Linux, set it via `sudo nvidia-smi -pl 400`. On Windows/WSL2, set the MSI Afterburner power slider to **69%** (~400W). Undervolting doesn't let you go below 400W — it adjusts the voltage/frequency curve for better performance-per-watt at the same power limit (see below).
 
-**Make power limit persistent (WSL2):**
+**Make power limit persistent:**
 ```bash
-# Add to ~/.bashrc or a systemd service
+# Add to ~/.bashrc
 sudo nvidia-smi -pl 400
 ```
 
@@ -753,15 +816,17 @@ sudo nvidia-smi -lgc 2000
 sudo nvidia-smi -lgc 0
 ```
 
-### Undervolting (Advanced)
+### Undervolting (Advanced — WSL2 Only)
 
-For advanced users, undervolting delivers near-default performance with significantly lower power draw and thermals than even the 400W power limit alone.
+> **Undervolting is only available on Windows/WSL2.** NVIDIA's Linux driver does not expose the voltage/frequency curve table, so tools like `nvidia-smi` on native Linux cannot undervolt. If you're on WSL2, apply undervolting from the Windows host — the GPU sees it regardless of which OS is running the workload.
+
+For advanced users on WSL2, undervolting delivers near-default performance with better thermals and efficiency at the same 400W limit — the voltage/frequency curve lets the GPU maintain higher clocks per watt.
 
 **Suggested starting point for RTX 5090:**
 - **Core voltage cap:** `875 mV` at `2827 MHz`
 - This retains boost clocks close to the default while dramatically reducing power consumption and temperatures
 
-> Undervolting is best done from the Windows host using **[MSI Afterburner](https://www.msi.com/Liqud-X/Afterburner)** — open the Tweaker tab, go to Settings (gear icon), raise the voltage limit ceiling, then drag individual voltage/frequency curve points down. Set the target point to `875 mV @ 2827 MHz` and flatten all higher-frequency points to the same voltage. In the Tweaker tab, set the **Power Limit** slider to **69%** (≈ 400W on the RTX 5090) to cap power without `nvidia-smi`. Apply, save to profile, and verify stability under load.
+> **How to do it (Windows host):** Use **[MSI Afterburner](https://www.msi.com/Liqud-X/Afterburner)** — open the Tweaker tab, go to Settings (gear icon), raise the voltage limit ceiling, then drag individual voltage/frequency curve points down. Set the target point to `875 mV @ 2827 MHz` and flatten all higher-frequency points to the same voltage. In the Tweaker tab, set the **Power Limit** slider to **69%** (≈ 400W on the RTX 5090) to cap power without `nvidia-smi`. Apply, save to profile, and verify stability under load.
 
 ### vLLM Settings for RTX 5090
 
@@ -773,7 +838,7 @@ In your vLLM `.env` file, these settings affect power usage:
 | `MAX_NUM_SEQS` | `1` | `4` | Fewer concurrent sequences = less power |
 | `PERFORMANCE_MODE` | `interactivity` | `throughput` | Interactivity prioritizes low latency over batch size |
 
-For a quiet 350W setup serving a single model interactively:
+For a power-conscious setup serving a single model interactively:
 ```bash
 GPU_MEMORY_UTILIZATION=0.85
 MAX_NUM_SEQS=1
