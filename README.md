@@ -320,6 +320,26 @@ ml execute-training-run my-run
 ml kill-training
 ```
 
+#### GRPO / RLVR post-training (grpo-0.6b, Oct 2026)
+
+Verifier-reward post-training pipeline: SFT cold-start → GRPO with a programmatic
+checker (math_verify) as the reward, TRL + vLLM in colocate mode on a single 5090.
+See **[scripts/train/README.md](scripts/train/README.md)** for the full pipeline,
+operating rules (verifier-first, 10-30% pass-rate gate, stop :30000 before stage 2)
+and results. Env: `grpo-trl`.
+
+```bash
+# 0. Gate check: base-model pass rate must land in 10-30%
+~/miniconda/envs/grpo-trl/bin/python scripts/train/baseline_probe.py --model Qwen/Qwen3-0.6B
+
+# 1. SFT cold-start (only if probe says so)
+~/miniconda/envs/grpo-trl/bin/python scripts/train/sft.py --train <train.jsonl> --eval <eval.jsonl>
+
+# 2. GRPO/RLVR (stop the :30000 server first — colocate vLLM needs the VRAM)
+~/miniconda/envs/grpo-trl/bin/python scripts/train/grpo.py \
+    --train <train.jsonl> --model outputs/runs/grpo-0.6b-sft/final
+```
+
 #### Quick Test Run
 
 For testing the pipeline before committing to a full training run, sample a small subset of the dataset. Datasets under 10K examples automatically trigger **fast settings** (1 epoch, batch=8, sparse logging) — reducing training from ~40 min to ~30 seconds.
@@ -688,6 +708,7 @@ claude-local   # detects the running llama.cpp server
 | `envs/inference-vllm.yml` | `inference-vllm` | vLLM inference |
 | `envs/training.yml` | `training` | PyTorch 2.4.0 + CUDA 12.1 + Unsloth |
 | (manual) | `training-cuda13` | PyTorch (cu130) + CUDA 13.0 + Flash Attention 2 |
+| `envs/grpo-trl.yml` | `grpo-trl` | **Post-training / RLVR**: TRL 0.23.1 + vLLM 0.11.0 + torch 2.8.0+cu128 (created Oct 2026, pins in `envs/grpo-trl.txt`) |
 
 ```bash
 # Create environments

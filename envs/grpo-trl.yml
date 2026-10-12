@@ -1,0 +1,10 @@
+name: grpo-trl
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+# Exact pins live in grpo-trl.txt (pip freeze of the verified env).
+# Create with:
+#   conda env create -f envs/grpo-trl.yml
+#   ~/miniconda/envs/grpo-trl/bin/pip install -r envs/grpo-trl.txt

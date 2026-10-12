@@ -1,0 +1,37 @@
+{
+  "_comment": "Example run config for the grpo-0.6b project. Copy to configs/training/grpo-0.6b.json and adjust. Registries under configs/ are gitignored local state — this example is the tracked reference.",
+  "project": "grpo-0.6b",
+  "base_model": "Qwen/Qwen3-0.6B",
+  "dtype": "bfloat16",
+  "task": "gsm8k-verifiable",
+  "dataset": {
+    "train": "datasets/processed/gsm8k-coldstart/train.jsonl",
+    "eval": "datasets/processed/gsm8k-coldstart/eval.jsonl",
+    "columns": ["prompt", "answer", "solution"]
+  },
+  "verifier": {
+    "module": "scripts/train/verifier.py",
+    "format_reward": 0.2,
+    "accuracy_reward": 1.0,
+    "target_pass_rate_band": [0.10, 0.30]
+  },
+  "sft": {
+    "epochs": 2.0,
+    "learning_rate": 6e-5,
+    "per_device_train_batch_size": 8,
+    "gradient_accumulation_steps": 4
+  },
+  "grpo": {
+    "steps": 100,
+    "num_generations": 8,
+    "learning_rate": 1e-6,
+    "beta": 0.0,
+    "max_completion_length": 512,
+    "vllm_mode": "colocate",
+    "vllm_gpu_memory_utilization": 0.25
+  },
+  "hardware": {
+    "gpu": "RTX 5090 32GB",
+    "prereq": "stop :30000 server before GRPO stage"
+  }
+}
