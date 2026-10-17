@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import json
-import random
 
 from datasets import load_dataset
 
@@ -29,7 +28,7 @@ def main() -> None:
     args = p.parse_args()
 
     ds = load_dataset("openai/gsm8k", "main", split=args.split)
-    random.Random(args.seed).shuffle(ds)
+    ds = ds.shuffle(seed=args.seed)  # HF Dataset: shuffle() returns a new Dataset
     subset = ds.select(range(min(args.n, len(ds))))
 
     from vllm import LLM, SamplingParams
@@ -37,16 +36,18 @@ def main() -> None:
     llm = LLM(model=args.model, gpu_memory_utilization=0.85, max_model_len=2048)
     sp = SamplingParams(temperature=0.6, max_tokens=512)
 
-    prompts = [
-        llm.apply_chat_template(
-            [
-                {"role": "user", "content": f"{ex['question']}\n\nEnd your reply with the final numeric answer inside <answer></answer> tags."},
-            ],
-            tokenize=False,
-            add_generation_prompt=True,
+    prompts = []
+    tok = llm.get_tokenizer()
+    for ex in subset:
+        prompts.append(
+            tok.apply_chat_template(
+                [
+                    {"role": "user", "content": f"{ex['question']}\n\nEnd your reply with the final numeric answer inside <answer></answer> tags."},
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
         )
-        for ex in subset
-    ]
     outs = llm.generate(prompts, sp)
 
     golds = [ex["answer"].split("####")[-1].strip() for ex in subset]
