@@ -16,6 +16,11 @@ scripts/train/grpo.py                 stage 2: GRPO (TRL GRPOTrainer, vLLM coloc
 outputs/runs/                         artifacts: checkpoints, curves, logs (gitignored)
 ```
 
+Learn the mechanics visually in **[notebooks/grpo-learn.ipynb](../notebooks/grpo-learn.ipynb)**
+(JupyterLab: `~/.local/bin/jupyter-lab --no-browser --ip 0.0.0.0 --port=8890 --notebook-dir=$HOME/Workspace/ml-stack/notebooks`):
+data formatting → verifier → group-advantage math → live rollouts, plus a section
+that plots the real run's reward curve from `outputs/runs/*/checkpoint-*/trainer_state.json`.
+
 ## Operating rules (learned the hard way, keep them)
 
 1. **Verifier before anything.** Measure base pass rate on a held-out slice

@@ -67,6 +67,7 @@ def main() -> None:
         beta=0.0,  # no KL penalty by default; add reference-KL if entropy collapses
         logging_steps=1,
         save_steps=25,
+        log_completions=True,  # 8 sample completions per step -> trackio: watch text evolve, catch reward hacking early
         report_to="trackio",
         seed=13,
     )
