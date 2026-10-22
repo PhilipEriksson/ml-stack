@@ -314,8 +314,18 @@ Two independent choices that get confused: **what parameters you train** (all we
 
 **In this repo:**
 
-- `finetune.py` (Unsloth) = **QLoRA** — 4-bit base + r=16 adapters on all 7 linear modules. This is what `ml create-training-run` / `ml execute-training-run` drives.
-- `scripts/train/sft.py` (TRL) = **full-FT SFT** in bf16 — same loop, no adapter step (per the grpo-0.6b pipeline's "BF16, no quantization" rule).
+- `finetune.py` (Unsloth) supports all three methods via the run config's `method` field:
+```bash
+# QLoRA (default): 4-bit NF4 base + r=16 adapters on all 7 linear modules
+ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned
+
+# LoRA: bf16 base + adapters (faster steps, needs the model in 16-bit)
+ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned --method lora
+
+# Full FT: all weights in bf16, LR auto-drops to 2e-5
+ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned --method fullft
+```
+- `scripts/train/sft.py` (TRL) is a standalone full-FT SFT (bf16, no adapters) used by the grpo-0.6b pipeline.
 - Switching is one change: pass a `peft_config` (LoRA/QLoRA) or omit it (full FT). Everything else — dataset, chat template, trainer, eval — stays identical.
 
 **Full workflow — download, process, train:**

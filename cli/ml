@@ -63,7 +63,9 @@ show_help() {
     create-training-run)
       echo "ml create-training-run"
       echo "  Creates a new fine-tuning run configuration (Unsloth)"
-      echo "  Usage: ml create-training-run <run-name> <model-variant> <dataset-variant>"
+      echo "  Usage: ml create-training-run <run-name> <model-variant> <dataset-variant> [--method lora|qlora|fullft]"
+      echo "  --method: lora (bf16 base + adapters), qlora (4-bit NF4 base + adapters, default),"
+      echo "            fullft (all weights in bf16, ~10x lower LR)"
       ;;
 
     execute-training-run)

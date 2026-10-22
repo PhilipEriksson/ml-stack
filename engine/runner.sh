@@ -13,7 +13,8 @@ case "$ACTION" in
     RUN=$1
     MODEL=$2
     DATASET=$3
-    bash "$ROOT/create-training-run" "$RUN" "$MODEL" "$DATASET"
+    shift 3
+    bash "$ROOT/create-training-run" "$RUN" "$MODEL" "$DATASET" "$@"
     ;;
 
   execute-training-run)

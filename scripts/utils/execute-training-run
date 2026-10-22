@@ -36,6 +36,9 @@ if [ ! -f "$CONFIG" ]; then
   exit 1
 fi
 
+# Show the training method recorded at create time (lora | qlora | fullft)
+METHOD=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('method', 'qlora'))" 2>/dev/null || echo "qlora")
+
 # Resolve active training environment
 TRAINING_ENV=$("$ROOT/scripts/utils/get-training-env")
 CONDA_PYTHON=$("$ROOT/scripts/utils/get-training-env" --python || true)
@@ -79,6 +82,7 @@ if [ -n "$EXTRA_FLAGS" ]; then
 else
   echo "🚀 Executing training run: $RUN"
 fi
+echo "🧠 Method: $METHOD"
 echo "📋 Config: $CONFIG"
 
 $CONDA_PYTHON "$ROOT/scripts/train/finetune.py" "$CONFIG" $EXTRA_FLAGS

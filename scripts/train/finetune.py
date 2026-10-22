@@ -81,28 +81,41 @@ if model_type == "gguf":
     sys.exit(1)
 
 # -------------------------
+# METHOD SELECTION
+# -------------------------
+# - qlora:  4-bit NF4 base + LoRA adapters   (default; lowest VRAM)
+# - lora:   bf16 base + LoRA adapters        (fastest per step)
+# - fullft: all weights in bf16, no adapters (knowledge injection / reference point)
+METHOD = config.get("method", "qlora")
+if METHOD not in ("lora", "qlora", "fullft"):
+    print("❌ Invalid method in config: {} (expected lora | qlora | fullft)".format(METHOD))
+    sys.exit(1)
+print(f"🧠 Method: {METHOD}")
+
+# -------------------------
 # LOAD MODEL
 # -------------------------
 print(f"🤖 Loading model: {model_path}")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_path,
     max_seq_length=2048,
-    load_in_4bit=True,
+    load_in_4bit=(METHOD == "qlora"),
 )
 
-# Add LoRA adapters for fine-tuning
-model = FastLanguageModel.get_peft_model(
-    model,
-    r=16,
-    target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                    "gate_proj", "up_proj", "down_proj"],
-    lora_alpha=16,
-    lora_dropout=0,
-    bias="none",
-    use_gradient_checkpointing="unsloth",
-    random_state=3407,
-    use_rslora=False,
-)
+# Add LoRA adapters unless doing full fine-tuning
+if METHOD != "fullft":
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=16,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_alpha=16,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
+        use_rslora=False,
+    )
 
 # -------------------------
 # LOAD DATASET
@@ -223,6 +236,9 @@ else:
 total_steps = (len(train_dataset) // (batch_size * accum_steps)) * num_epochs
 warmup_steps = max(1, int(total_steps * 0.05))
 
+# Adapters want a high LR; full FT wants ~10x lower
+learning_rate = 2e-4 if METHOD != "fullft" else 2e-5
+
 trainer = SFTTrainer(
     model=model,
     tokenizer=tokenizer,
@@ -236,7 +252,7 @@ trainer = SFTTrainer(
         num_train_epochs=num_epochs,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=accum_steps,
-        learning_rate=2e-4,
+        learning_rate=learning_rate,
         weight_decay=0.01,
         warmup_steps=warmup_steps,
         lr_scheduler_type="cosine",
