@@ -294,6 +294,30 @@ ml process-dataset qwen my_alpaca --instruction prompt --output response
 
 Uses Unsloth's `FastLanguageModel` for efficient 4-bit LoRA fine-tuning with `SFTTrainer`. The dataset is converted from alpaca format into chat messages and formatted with the model's native chat template.
 
+#### LoRA vs QLoRA vs Full Fine-Tuning
+
+Two independent choices that get confused: **what parameters you train** (all weights vs adapters) and **what stage you run** (SFT, DPO/GRPO, continued pretraining). SFT is a *stage*, full FT is a *parameterization* — any stage can run either way.
+
+| Method | What trains | Base weights | VRAM (0.6B, RTX 5090) | Use when |
+|---|---|---|---|---|
+| **LoRA** | Adapter A/B matrices only | bf16 | ~5 GB | Behavior shaping when memory allows — fastest per step |
+| **QLoRA** | Adapter A/B matrices only | 4-bit NF4 | ~3 GB | Same as LoRA, but the model doesn't fit in 16-bit; slower steps (on-the-fly dequant) |
+| **Full FT** | All weights | bf16 | ~10–12 GB | Knowledge injection (continued pretraining), or as the reference point |
+
+**Concepts:**
+
+- **PEFT** = *Parameter-Efficient Fine-Tuning*: the umbrella term for adapter methods (LoRA, DoRA, IA³, prefix tuning) — and the name of HuggingFace's library (`pip install peft`) implementing them. LoRA is the dominant one.
+- **LoRA**: for each target weight matrix `W`, train two small matrices `A` (d×r) and `B` (r×k); the effective update is `W + (α/r)·A·B` with rank ≤ r. Only A/B are saved (megabytes), and they can be merged into the base weights afterwards.
+- **QLoRA**: same adapters, but the frozen base is quantized to 4-bit **NF4** and dequantized on the fly. NF4's 16 levels are *quantiles of a normal distribution* — each bucket gets equal expected mass for Gaussian-like weights — unlike INT4's equally-spaced grid, or FP4 (NVFP4/MXFP4) which uses a float-style ladder (dense near zero, coarse at high magnitude). This distribution-matching is why NF4 wins at 4-bit.
+- **When LoRA matches full FT**: for post-training on capability the model already has (instruction following, style, format) — provided adapters target **all** linear layers (`q/k/v/o/gate/up/down`) and the learning rate is ~10× the full-FT value. Full FT still wins for: continued pretraining on large corpora (low-rank updates are a capacity bottleneck for new *knowledge*), very large batch sizes, and repeated sequential fine-tuning (LoRA accumulates "intruder dimensions").
+- **Continued pretraining** (teaching the model new knowledge at scale): full FT, plain next-token loss on packed raw text (no chat template), LR ~1e-5–2e-5, mixing ~5–10% general data to limit catastrophic forgetting.
+
+**In this repo:**
+
+- `finetune.py` (Unsloth) = **QLoRA** — 4-bit base + r=16 adapters on all 7 linear modules. This is what `ml create-training-run` / `ml execute-training-run` drives.
+- `scripts/train/sft.py` (TRL) = **full-FT SFT** in bf16 — same loop, no adapter step (per the grpo-0.6b pipeline's "BF16, no quantization" rule).
+- Switching is one change: pass a `peft_config` (LoRA/QLoRA) or omit it (full FT). Everything else — dataset, chat template, trainer, eval — stays identical.
+
 **Full workflow — download, process, train:**
 ```bash
 # 1. Download raw dataset
