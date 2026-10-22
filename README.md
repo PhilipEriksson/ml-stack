@@ -374,6 +374,23 @@ and results. Env: `grpo-trl`.
     --train <train.jsonl> --model outputs/runs/grpo-0.6b-sft/final
 ```
 
+#### Training Dashboards (TensorBoard + Aim)
+
+Every `finetune.py` run logs metrics to two local dashboards — no accounts, no upload:
+
+- **TensorBoard** — train/eval loss, LR, grad norm per run step. Launch with:
+  ```bash
+  ml tensorboard   # → http://localhost:6006
+  ```
+  Event files live in each run's `outputs/runs/<name>/logs/`.
+- **Aim** — cross-run comparison UI: eval loss across all runs colored by method/LR, param tables, run diffing. Launch with:
+  ```bash
+  ml aim-ui        # → http://localhost:43801
+  ```
+  All runs land in the shared repo `outputs/aim/`, grouped by experiment (`qlora`/`lora`/`fullft`), with method + model + dataset stored as params.
+
+Both serve on 0.0.0.0, so they're reachable over Tailscale from other machines (use the box's Tailscale hostname, not `localhost`).
+
 #### Quick Test Run
 
 For testing the pipeline before committing to a full training run, sample a small subset of the dataset. Datasets under 10K examples automatically trigger **fast settings** (1 epoch, batch=8, sparse logging) — reducing training from ~40 min to ~30 seconds.

@@ -19,7 +19,17 @@ case "$ACTION" in
 
   execute-training-run)
     RUN=$1
-    bash "$ROOT/execute-training-run" "$RUN"
+    bash "$ROOT/execute-training-run" "$RUN" "${@:2}"
+    ;;
+
+  tensorboard)
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training-cuda13/bin/python")
+    exec "$(dirname "$CONDA_PYTHON")/tensorboard" --logdir "${ML_STACK_HOME:-$HOME/ml-stack}/outputs/runs" --host 0.0.0.0 --port 6006
+    ;;
+
+  aim-ui)
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training-cuda13/bin/python")
+    exec "$(dirname "$CONDA_PYTHON")/aim" up --repo "${ML_STACK_HOME:-$HOME/ml-stack}/outputs/aim" --host 0.0.0.0 --port 43801
     ;;
 
   kill-training)

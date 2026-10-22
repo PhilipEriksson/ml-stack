@@ -37,9 +37,29 @@ if MISSING:
 
 from unsloth import FastLanguageModel
 from datasets import load_from_disk
-from transformers import TrainingArguments
+from transformers import TrainingArguments, TrainerCallback
 from trl import SFTTrainer
 import json
+
+
+class AimMetricsCallback(TrainerCallback):
+    """Forwards every logged metric (loss, eval_loss, lr, ...) to an Aim run."""
+
+    def __init__(self, aim_run):
+        self.aim_run = aim_run
+
+    def _track(self, metrics, step):
+        if not (self.aim_run and metrics):
+            return
+        for key, value in metrics.items():
+            if isinstance(value, (int, float)):
+                self.aim_run.track(value, name=key, step=step)
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        self._track(logs, state.global_step)
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        self._track(metrics, state.global_step)
 
 # -------------------------
 # INPUT
@@ -91,6 +111,34 @@ if METHOD not in ("lora", "qlora", "fullft"):
     print("❌ Invalid method in config: {} (expected lora | qlora | fullft)".format(METHOD))
     sys.exit(1)
 print(f"🧠 Method: {METHOD}")
+
+# -------------------------
+# EXPERIMENT TRACKING (Aim)
+# -------------------------
+# All runs log to a single local Aim repo at outputs/aim — browse with: ml aim-ui
+# TensorBoard logging is enabled per-run in TrainingArguments (ml tensorboard).
+AIM_REPO = os.path.join(os.path.dirname(os.path.dirname(run_dir)), "aim")
+aim_run = None
+try:
+    from aim import Run as AimRun
+
+    aim_run = AimRun(
+        repo=AIM_REPO,
+        experiment=METHOD,
+        log_system_params=True,
+    )
+    aim_run.name = f"{config.get('run', os.path.basename(run_dir))} ({METHOD})"
+    aim_run["method"] = METHOD
+    aim_run["hparams"] = {
+        "method": METHOD,
+        "model": config.get("model"),
+        "dataset": config.get("dataset"),
+        "model_path": model_path,
+    }
+    print(f"📈 Aim tracking → {AIM_REPO} (experiment: {METHOD})")
+except Exception as e:  # tracking is optional — never block training on it
+    aim_run = None
+    print(f"⚠️  Aim tracking unavailable ({type(e).__name__}: {e}) — skipping")
 
 # -------------------------
 # LOAD MODEL
@@ -221,6 +269,9 @@ def formatting_func(example):
 # -------------------------
 output_dir = os.path.join(run_dir, "artifacts")
 
+# transformers 5.x: TensorBoard event dir comes from this env var (not a TrainingArguments arg)
+os.environ["TENSORBOARD_LOGGING_DIR"] = os.path.join(run_dir, "logs")
+
 # Calculate training steps for warmup_steps
 if args.sample:
     num_epochs = 1
@@ -262,10 +313,16 @@ trainer = SFTTrainer(
         max_steps=-1,
         save_strategy="epoch",
         eval_strategy="epoch" if eval_dataset else "no",
+        report_to="tensorboard",
     ),
 )
 
+if aim_run:
+    trainer.add_callback(AimMetricsCallback(aim_run))
+
 trainer.train()
+if aim_run:
+    aim_run.close()
 
 # -------------------------
 # SAVE OUTPUT

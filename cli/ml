@@ -16,6 +16,8 @@ show_global_help() {
   echo "  ml sample-dataset <family> <dataset> <n>"
   echo "  ml create-training-run <run-name> <model> <dataset>"
   echo "  ml execute-training-run <run-name>"
+  echo "  ml tensorboard          # loss curves for all runs (port 6006)"
+  echo "  ml aim-ui               # run comparison UI (port 43801)"
   echo "  ml use-training-env [env-name]"
   echo "  ml kill-training"
   echo "  ml serve-dflash [--stop]"
@@ -74,6 +76,20 @@ show_help() {
       echo "  Usage: ml execute-training-run <run-name> [--sample]"
       echo "  --sample: 1 epoch, batch=8, faster logging (auto for <10K examples)"
       echo "  Use 'ml use-training-env' to switch between environments"
+      ;;
+
+    tensorboard)
+      echo "ml tensorboard"
+      echo "  Launches TensorBoard for all training runs (train/eval loss curves)"
+      echo "  Usage: ml tensorboard"
+      echo "  Serves http://localhost:6006 from outputs/runs/"
+      ;;
+
+    aim-ui)
+      echo "ml aim-ui"
+      echo "  Launches the Aim UI for run comparison (metrics across runs, params, diffing)"
+      echo "  Usage: ml aim-ui"
+      echo "  Serves http://localhost:43801 from outputs/aim/"
       ;;
 
     use-training-env)
