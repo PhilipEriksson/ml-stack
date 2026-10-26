@@ -13,10 +13,18 @@ DATASET_REG="$ROOT/configs/datasets/registry.json"
 # =========================
 if [ -z "$1" ] || [ -z "$2" ]; then
   echo "Usage:"
-  echo "  create-training-run <run-name> <family/model> <family/dataset>"
+  echo "  create-training-run <run-name> <family/model> <family/dataset> [options]"
   echo ""
   echo "  model and dataset must include their family prefix:"
   echo "    ml create-training-run my-run qwen/qwen3.6-27b qwen/cnn_dailymail"
+  echo ""
+  echo "  Options:"
+  echo "    --method lora|qlora|fullft   training method (default: qlora)"
+  echo "    --lora-r N                   adapter rank (default: 16)"
+  echo "    --lora-alpha N               adapter scaling (default: same as rank)"
+  echo "    --lora-dropout F             adapter dropout (default: 0)"
+  echo "    --lora-targets a,b,c         target modules (default: q,k,v,o,gate,up,down)"
+  echo "    --rslora                     rank-stabilized LoRA"
   exit 1
 fi
 
@@ -24,8 +32,13 @@ RUN=$1
 MODEL_REF=$2
 DATASET_REF=$3
 
-# Parse optional --method flag (default: qlora)
+# Parse optional --method flag (default: qlora) and LoRA adapter knobs
 METHOD="qlora"
+LORA_R=""
+LORA_ALPHA=""
+LORA_DROPOUT=""
+LORA_TARGETS=""
+LORA_RSLORA=""
 shift 3 || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,12 +46,45 @@ while [[ $# -gt 0 ]]; do
       METHOD="$2"
       shift 2
       ;;
+    --lora-r)
+      LORA_R="$2"
+      shift 2
+      ;;
+    --lora-alpha)
+      LORA_ALPHA="$2"
+      shift 2
+      ;;
+    --lora-dropout)
+      LORA_DROPOUT="$2"
+      shift 2
+      ;;
+    --lora-targets)
+      LORA_TARGETS="$2"
+      shift 2
+      ;;
+    --rslora)
+      LORA_RSLORA="true"
+      shift
+      ;;
     *)
       echo "❌ Unknown option: $1"
       exit 1
       ;;
   esac
 done
+
+for pair in "lora-r:$LORA_R" "lora-alpha:$LORA_ALPHA"; do
+  name="${pair%%:*}"
+  val="${pair#*:}"
+  if [ -n "$val" ] && ! [[ "$val" =~ ^[0-9]+$ ]]; then
+    echo "❌ --$name must be a positive integer (got: $val)"
+    exit 1
+  fi
+done
+if [ -n "$LORA_DROPOUT" ] && ! [[ "$LORA_DROPOUT" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+  echo "❌ --lora-dropout must be a number between 0 and 1 (got: $LORA_DROPOUT)"
+  exit 1
+fi
 
 case "$METHOD" in
   lora|qlora|fullft) ;;
@@ -145,6 +191,19 @@ cat <<EOF > "$RUN_DIR/config.json"
   "timestamp": "$TIME"
 }
 EOF
+
+# Merge any LoRA adapter knobs into the run config (only the ones passed)
+if [ -n "$LORA_R$LORA_ALPHA$LORA_DROPOUT$LORA_TARGETS$LORA_RSLORA" ]; then
+  TMPC=$(mktemp)
+  jq --arg r "$LORA_R" --arg a "$LORA_ALPHA" --arg d "$LORA_DROPOUT" \
+     --arg t "$LORA_TARGETS" --arg rs "$LORA_RSLORA" '
+    (if $r  != "" then .lora_r = ($r|tonumber) else . end)
+    | (if $a != "" then .lora_alpha = ($a|tonumber) else . end)
+    | (if $d != "" then .lora_dropout = ($d|tonumber) else . end)
+    | (if $t != "" then .lora_target_modules = ($t|split(",")) else . end)
+    | (if $rs != "" then .lora_rslora = true else . end)
+  ' "$RUN_DIR/config.json" > "$TMPC" && mv "$TMPC" "$RUN_DIR/config.json"
+fi
 
 # =========================
 # REGISTER RUN

@@ -342,6 +342,11 @@ ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned --method fullf
 ```json
 { "method": "lora", "lora_r": 32, "lora_alpha": 64, "lora_dropout": 0.05 }
 ```
+Or set them at creation time:
+```bash
+scripts/utils/create-training-run my-run qwen/qwen3-0.6b qwen/gsm8k \
+  --method lora --lora-r 32 --lora-alpha 64 --lora-dropout 0.05
+```
 The resolved values are written back into the run's `config.json` and logged to Aim as hparams, so every run records the rank it actually used. Rank is never auto-selected — it is whatever the config says (default 16).
 
 **Full workflow — download, process, train:**
