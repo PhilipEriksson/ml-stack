@@ -113,6 +113,39 @@ if METHOD not in ("lora", "qlora", "fullft"):
 print(f"🧠 Method: {METHOD}")
 
 # -------------------------
+# LORA ADAPTER CONFIG
+# -------------------------
+# Every knob is optional in the run config. The defaults reproduce the original
+# hardcoded adapter exactly (r=16, alpha=16, dropout=0, 7 projection modules,
+# plain LoRA), so existing configs keep behaving identically.
+DEFAULT_LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"]
+LORA_R = int(config.get("lora_r", 16))
+LORA_ALPHA = int(config.get("lora_alpha", LORA_R))
+LORA_DROPOUT = float(config.get("lora_dropout", 0.0))
+LORA_TARGETS = config.get("lora_target_modules", DEFAULT_LORA_TARGETS)
+LORA_RSLORA = bool(config.get("lora_rslora", False))
+LORA_BIAS = config.get("lora_bias", "none")
+
+if METHOD != "fullft":
+    print(f"🔧 LoRA: r={LORA_R} alpha={LORA_ALPHA} dropout={LORA_DROPOUT} "
+          f"rslora={LORA_RSLORA} targets={len(LORA_TARGETS)} modules")
+    # Record what actually ran in the run's own config.json
+    config.update({
+        "lora_r": LORA_R,
+        "lora_alpha": LORA_ALPHA,
+        "lora_dropout": LORA_DROPOUT,
+        "lora_target_modules": LORA_TARGETS,
+        "lora_rslora": LORA_RSLORA,
+        "lora_bias": LORA_BIAS,
+    })
+    try:
+        with open(args.config, "w") as f:
+            json.dump(config, f, indent=2)
+    except OSError as e:
+        print(f"⚠️  Could not write resolved LoRA params back to config: {e}")
+
+# -------------------------
 # EXPERIMENT TRACKING (Aim)
 # -------------------------
 # All runs log to a single local Aim repo at outputs/aim — browse with: ml aim-ui
@@ -134,6 +167,11 @@ try:
         "model": config.get("model"),
         "dataset": config.get("dataset"),
         "model_path": model_path,
+        "lora_r": LORA_R if METHOD != "fullft" else None,
+        "lora_alpha": LORA_ALPHA if METHOD != "fullft" else None,
+        "lora_dropout": LORA_DROPOUT if METHOD != "fullft" else None,
+        "lora_rslora": LORA_RSLORA if METHOD != "fullft" else None,
+        "lora_target_modules": ",".join(LORA_TARGETS) if METHOD != "fullft" else None,
     }
     print(f"📈 Aim tracking → {AIM_REPO} (experiment: {METHOD})")
 except Exception as e:  # tracking is optional — never block training on it
@@ -154,15 +192,14 @@ model, tokenizer = FastLanguageModel.from_pretrained(
 if METHOD != "fullft":
     model = FastLanguageModel.get_peft_model(
         model,
-        r=16,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                        "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=16,
-        lora_dropout=0,
-        bias="none",
+        r=LORA_R,
+        target_modules=LORA_TARGETS,
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=LORA_DROPOUT,
+        bias=LORA_BIAS,
         use_gradient_checkpointing="unsloth",
         random_state=3407,
-        use_rslora=False,
+        use_rslora=LORA_RSLORA,
     )
 
 # -------------------------

@@ -328,6 +328,22 @@ ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned --method fullf
 - `scripts/train/sft.py` (TRL) is a standalone full-FT SFT (bf16, no adapters) used by the grpo-0.6b pipeline.
 - Switching is one change: pass a `peft_config` (LoRA/QLoRA) or omit it (full FT). Everything else — dataset, chat template, trainer, eval — stays identical.
 
+**Adapter knobs (LoRA/QLoRA only)** — optional keys in the run config (`outputs/runs/<name>/config.json`); omit them and you get the defaults shown, which are the original hardcoded adapter:
+
+| key | default | meaning |
+|---|---|---|
+| `lora_r` | `16` | adapter rank — capacity of the update |
+| `lora_alpha` | `lora_r` | scaling; effective strength is `alpha/r` (default keeps 1.0) |
+| `lora_dropout` | `0.0` | dropout on adapter inputs |
+| `lora_target_modules` | `q,k,v,o,gate,up,down` | which linear layers get adapters |
+| `lora_rslora` | `false` | rank-stabilized LoRA (scales by `alpha/sqrt(r)`) |
+| `lora_bias` | `none` | `none` / `all` / `lora_only` |
+
+```json
+{ "method": "lora", "lora_r": 32, "lora_alpha": 64, "lora_dropout": 0.05 }
+```
+The resolved values are written back into the run's `config.json` and logged to Aim as hparams, so every run records the rank it actually used. Rank is never auto-selected — it is whatever the config says (default 16).
+
 **Full workflow — download, process, train:**
 ```bash
 # 1. Download raw dataset
