@@ -9,14 +9,15 @@ REGISTRY="$ROOT/configs/models/registry.json"
 # USAGE
 # =========================
 # Modes:
-#   add-model auto <hf-repo> [--type base|quantized|finetuned] [--family <name>]
-#   add-model <family> <variant> <source> [--type base|quantized|finetuned] [--file <filename>]
+#   add-model auto <hf-repo> [--type base|quantized|finetuned|gguf] [--family <name>]
+#   add-model <family> <variant> <source> [--type ...] [--file <filename>] [--mmproj <file>]
 #   add-model <family> <variant> --url <hf-file-url>
 #
 # Auto-detects quant format and bit-width from HF repo name/files.
 # --type overrides type detection; --family overrides family detection.
-# --file downloads only a specific file from the repo (useful for GGUF repos
-# with multiple quantizations).
+# --file downloads only a specific file from the repo (required when a GGUF repo
+# ships several quantizations; --all-quants takes them all).
+# --mmproj records a vision projection for multimodal GGUF models.
 #
 # Examples:
 #   add-model auto <org>/<model>-GGUF
@@ -125,6 +126,8 @@ TYPE=""
 FILE=""
 URL=""
 FAMILY_OVERRIDE=""
+MMPROJ=""
+ALL_QUANTS=false
 
 POSITIONAL_ARGS=()
 
@@ -145,6 +148,14 @@ while [[ $# -gt 0 ]]; do
     --family)
       FAMILY_OVERRIDE="$2"
       shift 2
+      ;;
+    --mmproj)
+      MMPROJ="$2"
+      shift 2
+      ;;
+    --all-quants)
+      ALL_QUANTS=true
+      shift
       ;;
     *)
       POSITIONAL_ARGS+=("$1")
@@ -257,16 +268,17 @@ fi
 # AUTO-DETECT TYPE
 # =========================
 if [ -z "$TYPE" ]; then
-  # Check for quantization files vs base model files
-  if echo "$FILES_JSON" | grep -qiE "(\.gguf|\.bin)"; then
-    TYPE="quantized"
-  elif echo "$FILES_JSON" | grep -qiE "(\.safetensors)"; then
-    TYPE="base"
-  elif echo "$FILES_JSON" | grep -qiE "(adapter_config|adapter_model\.bin)"; then
+  # Adapter repos ship adapter_config.json + adapter_model.safetensors, so the
+  # adapter check has to come before the generic .safetensors check.
+  if echo "$FILES_JSON" | grep -qiE "adapter_config\.json|adapter_model\.(safetensors|bin)"; then
     TYPE="finetuned"
+  elif echo "$FILES_JSON" | grep -qiE "\.gguf$"; then
+    TYPE="gguf"
+  elif echo "$FILES_JSON" | grep -qiE "\.(bin|safetensors)$"; then
+    TYPE="base"
   else
     echo "⚠️ Could not auto-detect type, defaulting to 'base'"
-    echo "⚠️ Use --type quantized|finetuned to override"
+    echo "⚠️ Use --type base|quantized|finetuned|gguf to override"
     TYPE="base"
   fi
 fi
@@ -288,7 +300,7 @@ echo "🏷️  Detected variant: $VARIANT_TYPE"
 # =========================
 # SELECT QUANT FORMAT
 # =========================
-if [ "$TYPE" == "quantized" ]; then
+if [ "$TYPE" == "quantized" ] || [ "$TYPE" == "gguf" ]; then
   QUANT=""
 
   # Auto-detect from repo name and file names
@@ -351,6 +363,27 @@ if [ "$TYPE" == "quantized" ]; then
       ;;
   esac
 
+  # GGUF is its own type — serve-model dispatches on it.
+  if [ "$QUANT" == "gguf" ]; then
+    TYPE="gguf"
+  fi
+
+  # A GGUF repo usually ships many quantizations. Downloading all of them is
+  # tens of GB and leaves serve-model guessing which file to load, so require
+  # an explicit choice unless the repo has exactly one.
+  if [ "$TYPE" == "gguf" ] && [ -z "$FILE" ] && [ "$ALL_QUANTS" != true ]; then
+    GGUF_FILES=$(echo "$FILES_JSON" | grep -iE "\.gguf$" || true)
+    GGUF_COUNT=$(echo "$GGUF_FILES" | grep -c . || true)
+    if [ "$GGUF_COUNT" -gt 1 ]; then
+      echo "❌ This repo ships $GGUF_COUNT GGUF files. Pick one with --file:"
+      echo "$GGUF_FILES" | sed 's/^/     /'
+      echo ""
+      echo "   ml add-model auto $SOURCE --file <filename>"
+      echo "   (or pass --all-quants to download every file)"
+      exit 1
+    fi
+  fi
+
 # =========================
 # BASE / FINETUNED
 # =========================
@@ -359,7 +392,12 @@ elif [ "$TYPE" == "base" ]; then
 elif [ "$TYPE" == "finetuned" ]; then
   TARGET="$ROOT/models/finetuned/$FAMILY/$VARIANT"
 else
-  echo "❌ Unknown type: $TYPE (use base, quantized, or finetuned)"
+  echo "❌ Unknown type: $TYPE (use base, quantized, finetuned, or gguf)"
+  exit 1
+fi
+
+if [ "$TYPE" == "gguf" ] && [ "$QUANT" != "gguf" ]; then
+  echo "❌ --type gguf but no .gguf files found in $SOURCE"
   exit 1
 fi
 
@@ -374,15 +412,19 @@ jq --arg fam "$FAMILY" \
    --arg type "$TYPE" \
    --arg path "$TARGET" \
    --arg variant "$VARIANT_TYPE" \
+   --arg file "$FILE" \
+   --arg mmproj "$MMPROJ" \
    '
    .[$fam] = (.[$fam] // {}) |
    .[$fam].models = (.[$fam].models // {}) |
-   .[$fam].models[$var] = {
+   .[$fam].models[$var] = ({
      type: $type,
      variant: $variant,
      path: $path,
      status: "downloading"
    }
+   + (if $file   != "" then {file: $file}     else {} end)
+   + (if $mmproj != "" then {mmproj: $mmproj} else {} end))
    ' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
 
 # =========================
@@ -420,12 +462,22 @@ if [ -z "$DOWNLOADED" ]; then
   DOWNLOADED="$TARGET"
 fi
 
+# Resolve a relative --mmproj against the download target
+if [ -n "$MMPROJ" ] && [[ "$MMPROJ" != /* ]]; then
+  MMPROJ="$TARGET/$MMPROJ"
+fi
+
 echo "✅ Downloaded to: $TARGET"
 
 # =========================
 # COMPUTE HASH
 # =========================
-MODEL_HASH=$(find "$TARGET" -type f -print0 \
+# Exclude hf's download metadata (.cache/) and dotfiles: they change between
+# downloads of identical weights and would make the hash unstable.
+MODEL_HASH=$(find "$TARGET" -type f \
+  -not -path "*/.cache/*" \
+  -not -name ".*" \
+  -print0 \
   | sort -z \
   | xargs -0 sha256sum \
   | sha256sum \
@@ -442,18 +494,26 @@ jq --arg fam "$FAMILY" \
    --arg path "$TARGET" \
    --arg variant "$VARIANT_TYPE" \
    --arg hash "$MODEL_HASH" \
+   --arg file "$FILE" \
+   --arg mmproj "$MMPROJ" \
    '
    .[$fam] = (.[$fam] // {}) |
    .[$fam].models = (.[$fam].models // {}) |
-   .[$fam].models[$var] = {
+   .[$fam].models[$var] = ({
      type: $type,
      variant: $variant,
      path: $path,
      hash: $hash,
      status: "ready"
    }
+   + (if $file   != "" then {file: $file}     else {} end)
+   + (if $mmproj != "" then {mmproj: $mmproj} else {} end))
    ' "$REGISTRY" > "$TEMP" && mv "$TEMP" "$REGISTRY"
 
 echo "✅ Added to registry: $FAMILY/$VARIANT"
 echo "🔐 Hash: $MODEL_HASH"
-echo "📊 Use: ml serve-model $FAMILY $VARIANT"
+if [ "$TYPE" == "gguf" ]; then
+  echo "📊 Use: ml serve-model $FAMILY $VARIANT"
+else
+  echo "📊 Use: point configs/vllm/active.env at $TARGET, then start the vllm service"
+fi

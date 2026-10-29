@@ -7,7 +7,7 @@ set -e
 # =========================
 # INPUT
 # =========================
-if [ -z "$1" ] || [ -z "$2" ]; then
+if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
   echo "Usage:"
   echo "  sample-dataset <family> <dataset-name> <n-samples>"
   echo ""
@@ -15,8 +15,13 @@ if [ -z "$1" ] || [ -z "$2" ]; then
   echo "  N examples from the train split (keeping all eval examples)."
   echo ""
   echo "  Examples:"
-  echo "    sample-dataset qwen alpaca-cleaned 1000"
-  echo "    sample-dataset qwen alpaca-cleaned 5000"
+  echo "    sample-dataset <family> <dataset> 1000"
+  echo "    sample-dataset <family> <dataset> 5000"
+  exit 1
+fi
+
+if ! [[ "$3" =~ ^[0-9]+$ ]] || [ "$3" -le 0 ]; then
+  echo "❌ <n-samples> must be a positive integer (got: $3)"
   exit 1
 fi
 

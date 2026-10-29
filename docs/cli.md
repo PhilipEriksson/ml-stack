@@ -17,18 +17,28 @@ Model and dataset references are always `<family>/<variant>` — the keys in the
 
 Downloads a Hugging Face repo and registers it. Detects:
 
-- **type** — `base` (safetensors), `quantized` (GGUF/GPTQ/AWQ/AutoRound/NVFP4/MXFP4), `finetuned` (adapter files)
+- **type** — `base` (safetensors), `gguf` (GGUF repos), `quantized` (GPTQ/AWQ/AutoRound/NVFP4/MXFP4), `finetuned` (adapter files)
 - **quant format and bit-width** — from the repo name and file list
 - **variant** — `pretrained`, `instruct`, or `reasoning` from the repo name
 
 ```bash
 ml add-model auto <org>/<model>
-ml add-model auto <org>/<model>-GGUF
+ml add-model auto <org>/<model>-GGUF --file <model>-Q4_K_M.gguf
 ml add-model auto <org>/<model> --type base
 ml add-model auto <org>/<model> --family <name>   # when the repo name is ambiguous
 ```
 
 Family detection matches a keyword table (`qwen`, `llama`, `mistral`, `mixtral`, `gemma`, `phi`, `deepseek`, `glm`, `granite`, `nemotron`, `olmo`, `falcon`, `smollm`, `exaone`, `kimi`, `minimax`, `gpt-oss`). Anything else needs `--family`.
+
+**GGUF repos ship many quantizations.** If the repo has more than one `.gguf` file, `add-model` lists them and exits rather than downloading tens of GB and leaving `serve-model` to guess. Pick one with `--file`, or pass `--all-quants` to take everything.
+
+| Flag | Meaning |
+|---|---|
+| `--type` | `base`, `quantized`, `finetuned`, or `gguf` |
+| `--family` | override family detection |
+| `--file` | download a single file from the repo |
+| `--mmproj` | vision projection file (relative to the model dir, or absolute) |
+| `--all-quants` | download every file in a multi-quant GGUF repo |
 
 ### `ml add-model <family> <variant> <source>`
 
@@ -136,9 +146,11 @@ ml serve-model <family> <variant> --ctx 32768 --port 8000 --fa
 | `--ngl` | `999` | GPU layers (999 = all) |
 | `--port` | `8000` | listen port |
 | `--host` | `0.0.0.0` | bind address |
+| `--file` | registry `file` | pick one `.gguf` when the directory holds several |
+| `--threads` | `nproc` | CPU threads |
 | `--fa` | off | flash attention |
 
-If the registry entry has an `mmproj` field, the vision projection is loaded automatically. The active model is recorded in `configs/llama/.active-llama` so `claude-local` and `ml eval` can find it.
+If the registry entry has an `mmproj` field, the vision projection is loaded automatically. If the model directory holds more than one `.gguf` and no file is recorded, the command lists them and exits instead of picking one arbitrarily. The active model is recorded in `configs/llama/.active-llama` so `claude-local` and `ml eval` can find it.
 
 ### `ml set-vllm-env [file]`
 

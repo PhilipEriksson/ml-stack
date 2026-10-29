@@ -61,7 +61,7 @@ Everything under `models/`, `datasets/`, and `outputs/` is gitignored except the
 
 | Field | Meaning |
 |---|---|
-| `type` | `base`, `quantized`, `finetuned`, or `gguf` (set for GGUF downloads) |
+| `type` | `base`, `gguf`, `quantized`, or `finetuned` — `serve-model` dispatches on it |
 | `variant` | `pretrained`, `instruct`, or `reasoning` |
 | `path` | absolute path to the model directory |
 | `file` | specific file inside `path`, when the directory holds several |
@@ -91,7 +91,7 @@ If you want one key per model line rather than per architecture, pass `--family`
 
 ## Hashes
 
-`add-model` computes `sha256` over the sorted list of file hashes in the model directory. Two consequences worth knowing:
+`add-model` computes `sha256` over the sorted list of file hashes in the model directory, excluding `hf`'s download metadata (`.cache/`) and dotfiles. Two consequences worth knowing:
 
 - Re-downloading the same weights produces the same hash, so `ml compare-runs` can tell you whether two runs actually started from different weights.
-- Any file added to the directory changes the hash. Keep notes and scratch files out of `models/`.
+- Any *model* file added to the directory changes the hash. Keep notes and scratch files out of `models/`.

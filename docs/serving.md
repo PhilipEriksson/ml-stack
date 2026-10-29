@@ -109,9 +109,10 @@ curl -X POST http://localhost:8000/search -H "Content-Type: application/json" \
 ```bash
 ml serve-model <family> <variant>
 ml serve-model <family> <variant> --ctx 32768 --port 8000 --fa
+ml serve-model <family> <variant> --file <model>-Q4_K_M.gguf --threads 8
 ```
 
-The script resolves the registry entry, finds the `.gguf` file (or uses the recorded `file`), and launches `runtimes/llama.cpp/build/bin/llama-server`. If the entry has an `mmproj`, the vision projection is loaded too.
+The script resolves the registry entry, uses the recorded `file` (or `--file`) to pick the `.gguf`, and launches `runtimes/llama.cpp/build/bin/llama-server`. If the entry has an `mmproj`, the vision projection is loaded too. A directory with several `.gguf` files and no recorded choice is an error, not a guess.
 
 Before launching it checks whether the vLLM container is running and offers to stop it — both backends on one GPU will contend for VRAM.
 

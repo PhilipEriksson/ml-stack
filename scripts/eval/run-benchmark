@@ -51,7 +51,7 @@ fi
 # --- 3. Fallback: active llama.cpp server ---
 if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
   ACTIVE=$(cat "$ROOT/configs/llama/.active-llama")
-  if command -v lsof &>/dev/null && lsof -i :8000 -sTCP:LISTEN &>/dev/null; then
+  if curl -sf --max-time 2 http://localhost:8000/v1/models >/dev/null 2>&1; then
     BACKEND_MODEL="$ACTIVE"
     BACKEND_URL="http://localhost:8000/v1"
     BACKEND_TYPE="llama.cpp"

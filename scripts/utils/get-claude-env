@@ -34,8 +34,9 @@ if [ -z "$MODEL_NAME" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
   if [ -f "$REGISTRY" ]; then
     TYPE=$(jq -r --arg f "$FAM" --arg v "$VAR" '.[$f].models[$v].type // empty' "$REGISTRY" 2>/dev/null)
     if [ "$TYPE" = "gguf" ]; then
-      # Check if llama-server is actually running on port 8000
-      if command -v lsof &>/dev/null && lsof -i :8000 -sTCP:LISTEN &>/dev/null; then
+      # Probe the API rather than the port: lsof is not always installed, and a
+      # listening socket is not the same as a working server.
+      if curl -sf --max-time 2 http://localhost:8000/v1/models >/dev/null 2>&1; then
         MODEL_NAME="$FAM/$VAR"
       fi
     fi

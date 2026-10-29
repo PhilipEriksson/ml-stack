@@ -40,12 +40,15 @@ show_help() {
     add-model)
       echo "ml add-model"
       echo "  Downloads and registers a model from Hugging Face"
-      echo "  Auto-detects type (base/quantized/finetuned), quant format (GGUF, GPTQ,"
-      echo "  AWQ, AutoRound, NVFP4, MXFP4) and bit-width"
-      echo "  Usage: ml add-model auto <hf-repo> [--type base|quantized|finetuned] [--family <name>]"
-      echo "  Usage: ml add-model <family> <variant> <source> [--type ...] [--file <filename>]"
+      echo "  Auto-detects type (base/gguf/quantized/finetuned), quant format (GGUF,"
+      echo "  GPTQ, AWQ, AutoRound, NVFP4, MXFP4) and bit-width"
+      echo "  Usage: ml add-model auto <hf-repo> [--type base|quantized|finetuned|gguf] [--family <name>]"
+      echo "  Usage: ml add-model <family> <variant> <source> [--type ...] [--file <filename>] [--mmproj <file>]"
       echo "  Usage: ml add-model <family> <variant> --url <hf-file-url>"
       echo "  --family: override family detection when the repo name is ambiguous"
+      echo "  --file: pick one file (required for GGUF repos with several quants)"
+      echo "  --all-quants: download every file in a multi-quant GGUF repo"
+      echo "  --mmproj: vision projection for multimodal GGUF models"
       ;;
 
     add-dataset)
@@ -124,7 +127,8 @@ show_help() {
     serve-model)
       echo "ml serve-model"
       echo "  Serves a registered GGUF model via llama.cpp"
-      echo "  Usage: ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n] [--host addr] [--fa]"
+      echo "  Usage: ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n] [--host addr] [--file name] [--threads n] [--fa]"
+      echo "  --file: pick one .gguf when the model directory holds several"
       echo "  For HF models, use the Docker vLLM service instead"
       ;;
 

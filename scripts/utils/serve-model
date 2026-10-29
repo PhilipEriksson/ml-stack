@@ -20,6 +20,7 @@ NGL=999
 PORT=8000
 HOST="0.0.0.0"
 FA="off"
+THREADS=$(nproc 2>/dev/null || echo 8)
 
 # =========================
 # AUTO GPU DETECTION
@@ -44,6 +45,8 @@ while [[ $# -gt 0 ]]; do
     --ngl) NGL="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
+    --file) FILE_OVERRIDE="$2"; shift 2 ;;
+    --threads) THREADS="$2"; shift 2 ;;
     --fa) FA="on"; shift ;;
     *) echo "❌ Unknown flag: $1"; exit 1 ;;
   esac
@@ -54,6 +57,9 @@ done
 # =========================
 MODEL_PATH=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].path' "$REGISTRY")
 MODEL_TYPE=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].type' "$REGISTRY")
+MODEL_FILE=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].file // empty' "$REGISTRY")
+# A --file flag wins over the registry entry.
+MODEL_FILE="${FILE_OVERRIDE:-$MODEL_FILE}"
 MMPROJ=$(jq -r --arg fam "$FAMILY" --arg var "$VARIANT" '.[$fam].models[$var].mmproj // empty' "$REGISTRY")
 
 if [ "$MODEL_PATH" == "null" ] || [ -z "$MODEL_PATH" ]; then
@@ -75,7 +81,9 @@ echo "$FAMILY/$VARIANT" > "$ROOT/configs/llama/.active-llama"
 # =========================
 # SELECT BACKEND
 # =========================
-if [ "$MODEL_TYPE" != "gguf" ]; then
+# `gguf` is the canonical type; `quantized` is accepted for entries registered
+# before GGUF got its own type, as long as the directory actually holds a .gguf.
+if [ "$MODEL_TYPE" != "gguf" ] && [ "$MODEL_TYPE" != "quantized" ]; then
   echo "❌ serve-model only supports GGUF models (type: $MODEL_TYPE)"
   echo "   For HF models, use the Docker vLLM service instead:"
   echo "   docker compose -f services/docker/docker-compose.yml up -d vllm"
@@ -141,10 +149,27 @@ fi
 if [ -f "$MODEL_PATH" ]; then
   GGUF_FILE="$MODEL_PATH"
 elif [ -d "$MODEL_PATH" ]; then
-  GGUF_FILE=$(find "$MODEL_PATH" -maxdepth 1 -name "*.gguf" | head -n 1)
-  if [ -z "$GGUF_FILE" ]; then
-    echo "❌ No .gguf file found in $MODEL_PATH"
-    exit 1
+  if [ -n "$MODEL_FILE" ]; then
+    GGUF_FILE="$MODEL_PATH/$MODEL_FILE"
+    if [ ! -f "$GGUF_FILE" ]; then
+      echo "❌ Registry points at '$MODEL_FILE', which is not in $MODEL_PATH"
+      exit 1
+    fi
+  else
+    GGUF_CANDIDATES=$(find "$MODEL_PATH" -maxdepth 1 -name "*.gguf" | sort)
+    GGUF_COUNT=$(echo "$GGUF_CANDIDATES" | grep -c . || true)
+    if [ "$GGUF_COUNT" -eq 0 ]; then
+      echo "❌ No .gguf file found in $MODEL_PATH"
+      exit 1
+    elif [ "$GGUF_COUNT" -gt 1 ]; then
+      echo "❌ $GGUF_COUNT .gguf files in $MODEL_PATH — pick one:"
+      echo "$GGUF_CANDIDATES" | sed 's/^/     /'
+      echo ""
+      echo "   Re-register with --file, or pass the file explicitly:"
+      echo "   ml serve-model $FAMILY $VARIANT --file <filename>"
+      exit 1
+    fi
+    GGUF_FILE="$GGUF_CANDIDATES"
   fi
 else
   echo "❌ Model path not found: $MODEL_PATH"
@@ -159,7 +184,7 @@ CMD=(
   --port "$PORT"
   -c "$CTX"
   -ngl "$NGL"
-  --threads 16
+  --threads "$THREADS"
 )
 
 # Add vision projection if available
