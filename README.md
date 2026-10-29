@@ -559,6 +559,22 @@ Runs a fixed prompt set through each artifact and records output length, whether
 reasoning block survived, and whether an expected substring appeared. JSON output so
 results diff across runs instead of being eyeballed.
 
+**Verification needs the same interpreter split as creation.** `verify.py` imports the
+loader for each artifact kind in-process, so one run cannot cover all three formats:
+
+| Artifacts | Interpreter | Why |
+|---|---|---|
+| `hf:bf16`, `gguf:*` | `training-cuda13` | transformers + llama-cli |
+| `hf:nvfp4` | `quant-nvfp4` | needs `compressed-tensors>=0.15.0` |
+| `exl3:*` | `quant-exl3` | exllamav3 |
+
+Loading an NVFP4 artifact under `training-cuda13` fails with
+`ImportError: compressed-tensors>=0.15.0 is required` — the artifact is fine, the
+interpreter is wrong.
+
+`summarize.py` merges every `verify-*.json` in the report directory, newest report per
+artifact label winning, so a stale run cannot overwrite a fresh one.
+
 #### Measured results — `qwopus-0.8b`
 
 All six artifacts, same three prompts, `scripts/quantize/summarize.py`:
@@ -567,15 +583,21 @@ All six artifacts, same three prompts, `scripts/quantize/summarize.py`:
 |---|---|---:|---|---|
 | BF16 (baseline) | hf | 1.7 GB | 3/3 | 3/3 |
 | GGUF Q8_0 | gguf | 834 MB | 3/3 | 3/3 |
-| GGUF Q4_K_M | gguf | 542 MB | 3/3 | 3/3 |
+| GGUF Q4_K_M | gguf | 542 MB | 2/3 | 3/3 |
 | EXL3 4.0 bpw | exl3 | 1.08 GB | 3/3 | 3/3 |
 | EXL3 3.0 bpw | exl3 | 1.02 GB | 3/3 | **2/3** |
-| NVFP4 | hf | 892 MB | 3/3 | 3/3 |
+| NVFP4 | hf | 892 MB | 2/3 | 3/3 |
 
 **The one cliff:** EXL3 at 3.0 bpw dropped the `code` prompt — the output no longer
 contained a function definition. Everything else held. That is the first measurable
 degradation in this set, and it appeared at the lowest bitrate, which is the expected
 direction.
+
+**The `close` column is truncation-sensitive, not a quality signal.** Q4_K_M and NVFP4
+score 2/3 there because their `arithmetic` answer ran past `--max-new 700` and the closing
+think tag never got emitted — the expected answer was still present in all three. Read the
+`expect` column for correctness; treat `close` as a check that the reasoning block
+terminated within the budget.
 
 **EXL3 is larger than GGUF Q4_K_M despite a lower decoder bitrate** because the vision
 tower is quantized at 6 bpw and the MTP head is kept — the decoder is 3.0/4.0 bpw, not the

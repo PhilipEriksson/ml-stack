@@ -64,6 +64,7 @@ def run_hf(model_dir: Path, prompt: str, max_new: int) -> str:
     import transformers
 
     model = None
+    errors = []
     for cls_name in ("AutoModelForImageTextToText", "AutoModelForCausalLM"):
         try:
             cls = getattr(transformers, cls_name)
@@ -72,10 +73,14 @@ def run_hf(model_dir: Path, prompt: str, max_new: int) -> str:
             model = cls.from_pretrained(
                 str(model_dir), dtype="bfloat16", device_map="cuda")
             break
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # Never swallow the cause: a bare "could not load model" hides a
+            # missing dependency (e.g. compressed-tensors for NVFP4) and costs
+            # a debugging cycle. Keep the last real error and report it.
+            errors.append(f"{cls_name}: {type(e).__name__}: {e}")
             continue
     if model is None:
-        return "ERROR: could not load model"
+        return "ERROR: could not load model\n" + "\n".join(errors)
 
     tok = transformers.AutoTokenizer.from_pretrained(str(model_dir))
     msgs = [{"role": "user", "content": prompt}]
