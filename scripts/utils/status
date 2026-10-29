@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# One-screen overview: what is registered, what is running, what is missing.
+# Usage: ml status
+
+set -e
+
+ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+MODEL_REG="$ROOT/configs/models/registry.json"
+DATA_REG="$ROOT/configs/datasets/registry.json"
+RUN_REG="$ROOT/configs/runs/registry.json"
+EVAL_REG="$ROOT/configs/evals/registry.json"
+
+WARNINGS=()
+
+echo "🧠 ML Stack status"
+echo "=================="
+echo "root: $ROOT"
+echo ""
+
+# =========================
+# ENVIRONMENTS
+# =========================
+echo "Environments"
+
+TRAIN_ENV=$(cat "$ROOT/configs/.active-training-env" 2>/dev/null | tr -d '[:space:]')
+TRAIN_ENV="${TRAIN_ENV:-training}"
+TRAIN_PY=$("$ROOT/scripts/utils/get-training-env" --python 2>/dev/null || true)
+if [ -n "$TRAIN_PY" ] && [ -f "$TRAIN_PY" ]; then
+  echo "  training   $TRAIN_ENV ✅"
+else
+  echo "  training   $TRAIN_ENV ❌ not found"
+  WARNINGS+=("training env '$TRAIN_ENV' missing — conda env create -f envs/training.yml")
+fi
+
+if [ -f "$ROOT/configs/vllm/active.env" ]; then
+  VLLM_MODEL=$(grep '^MODEL_NAME=' "$ROOT/configs/vllm/active.env" | head -1 | cut -d= -f2-)
+  echo "  vllm       active.env → ${VLLM_MODEL:-<MODEL_NAME unset>}"
+  [ -z "$VLLM_MODEL" ] && WARNINGS+=("configs/vllm/active.env has no MODEL_NAME")
+else
+  echo "  vllm       no active.env"
+  WARNINGS+=("configs/vllm/active.env missing — ml set-vllm-env <file>")
+fi
+
+if [ -f "$ROOT/configs/llama/.active-llama" ]; then
+  echo "  llama.cpp  $(cat "$ROOT/configs/llama/.active-llama")"
+else
+  echo "  llama.cpp  none recorded"
+fi
+
+if [ -x "$ROOT/runtimes/llama.cpp/build/bin/llama-server" ]; then
+  echo "  llama bin  ✅ built"
+else
+  echo "  llama bin  ❌ not built"
+  WARNINGS+=("llama-server not built — see docs/install.md")
+fi
+echo ""
+
+# =========================
+# REGISTRIES
+# =========================
+echo "Models"
+
+if [ -s "$MODEL_REG" ]; then
+  COUNT=$(jq '[to_entries[].value.models | length] | add // 0' "$MODEL_REG")
+  if [ "$COUNT" -eq 0 ]; then
+    echo "  none registered"
+  else
+    jq -r 'to_entries[] | .key as $f | .value.models | to_entries[]
+           | "  \($f)/\(.key)  [\(.value.type)]  \(.value.status)"' "$MODEL_REG"
+    BAD=$(jq -r '[to_entries[].value.models | to_entries[] | select(.value.status != "ready")] | length' "$MODEL_REG")
+    [ "$BAD" -gt 0 ] && WARNINGS+=("$BAD model(s) not in 'ready' state")
+  fi
+else
+  echo "  none registered"
+fi
+echo ""
+
+echo "Datasets"
+if [ -s "$DATA_REG" ]; then
+  jq -r 'to_entries[] | .key as $f | .value.datasets | to_entries[]
+         | "  \($f)/\(.key)  \(.value.status // "unknown")"' "$DATA_REG"
+else
+  echo "  none registered"
+fi
+echo ""
+
+echo "Runs"
+if [ -s "$RUN_REG" ]; then
+  jq -r 'to_entries | sort_by(.value.timestamp) | reverse | .[0:5][]
+         | "  \(.key)  \(.value.method)  \(.value.status)  \(.value.timestamp)"' "$RUN_REG"
+  TOTAL=$(jq 'length' "$RUN_REG")
+  [ "$TOTAL" -gt 5 ] && echo "  … $TOTAL total (ml runs)"
+else
+  echo "  none"
+fi
+echo ""
+
+echo "Evals"
+if [ -s "$EVAL_REG" ]; then
+  jq -r 'to_entries[] | "  \(.key)  \(.value.evals | length) eval(s)"' "$EVAL_REG"
+else
+  echo "  none"
+fi
+echo ""
+
+# =========================
+# BACKENDS
+# =========================
+echo "Backends"
+
+DOCKER_CMD=""
+if command -v docker &>/dev/null; then
+  DOCKER_CMD="docker"
+elif [ -f "$HOME/bin/docker" ]; then
+  DOCKER_CMD="$HOME/bin/docker"
+fi
+
+if [ -n "$DOCKER_CMD" ]; then
+  VLLM_STATE=$("$DOCKER_CMD" ps --filter "name=vllm-server" --format "{{.Status}}" 2>/dev/null || true)
+  if [ -n "$VLLM_STATE" ]; then
+    echo "  vllm       running ($VLLM_STATE) → :8080"
+  else
+    echo "  vllm       stopped"
+  fi
+else
+  echo "  vllm       docker not found"
+fi
+
+if curl -sf --max-time 2 http://localhost:8000/v1/models >/dev/null 2>&1; then
+  echo "  llama.cpp  responding → :8000"
+else
+  echo "  llama.cpp  not responding on :8000"
+fi
+echo ""
+
+# =========================
+# WARNINGS
+# =========================
+if [ ${#WARNINGS[@]} -gt 0 ]; then
+  echo "Needs attention"
+  for w in "${WARNINGS[@]}"; do
+    echo "  ⚠️  $w"
+  done
+else
+  echo "✅ Nothing missing"
+fi

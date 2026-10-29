@@ -20,6 +20,7 @@ NGL=999
 PORT=8000
 HOST="0.0.0.0"
 FA="off"
+STOP_VLLM=false
 THREADS=$(nproc 2>/dev/null || echo 8)
 
 # =========================
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --host) HOST="$2"; shift 2 ;;
     --file) FILE_OVERRIDE="$2"; shift 2 ;;
     --threads) THREADS="$2"; shift 2 ;;
+    --stop-vllm) STOP_VLLM=true; shift ;;
     --fa) FA="on"; shift ;;
     *) echo "❌ Unknown flag: $1"; exit 1 ;;
   esac
@@ -111,26 +113,29 @@ if [ -n "$DOCKER_CMD" ]; then
     echo "⚠️  vLLM Docker container is running and using GPU memory."
     echo "   Running both vLLM and llama.cpp may exceed your VRAM."
     echo ""
-    if [ -t 0 ]; then
-      read -r -p "Stop vLLM container before proceeding? [Y/n] " ANSWER
+    if [ "$STOP_VLLM" = true ]; then
+      echo "   Stopping vllm-server (--stop-vllm)..."
+      "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
+      sleep 2
+      echo "   ✅ vLLM stopped"
+    elif [ -t 0 ]; then
+      read -r -p "Stop vLLM container before proceeding? [y/N] " ANSWER
       case "${ANSWER,,}" in
-        y|yes|"")
+        y|yes)
           echo "   Stopping vllm-server..."
           "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
           sleep 2
           echo "   ✅ vLLM stopped"
-          ;;
-        n|no)
-          echo "   Continuing with vLLM still running (may run out of VRAM)"
           ;;
         *)
           echo "   Continuing with vLLM still running (may run out of VRAM)"
           ;;
       esac
     else
-      echo "   (non-interactive mode — skipping vLLM prompt, stopping automatically)"
-      "$DOCKER_CMD" stop vllm-server 2>/dev/null || true
-      sleep 2
+      # Never stop a running server without an explicit flag: this script is
+      # called from wrappers and cron where stdin is not a terminal.
+      echo "   Non-interactive: leaving vLLM running."
+      echo "   Pass --stop-vllm to stop it first."
     fi
   fi
 fi

@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run shell test suite
+        run: bash tests/run.sh
+
+      - name: Syntax-check shell scripts
+        run: |
+          for f in cli/ml engine/runner.sh scripts/*.sh scripts/utils/* scripts/eval/* tests/*.sh; do
+            case "$f" in *.py) continue ;; esac
+            bash -n "$f"
+          done
+
+      - name: Compile Python
+        run: python3 -m py_compile scripts/train/*.py scripts/quantize/*.py scripts/quantize/formats/*.py scripts/utils/sample-dataset.py services/api-webui/app.py

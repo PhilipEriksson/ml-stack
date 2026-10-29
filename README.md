@@ -97,6 +97,7 @@ docker compose -f services/docker/docker-compose.yml up -d api-webui
 | `ml kill-training` | Stop running training processes |
 | `ml tensorboard` / `ml aim-ui` | Loss curves (6006) / cross-run comparison (43801) |
 | `ml runs` / `ml compare-runs <a> <b>` | List / diff training runs |
+| `ml status` | Environments, registries, backends, and what's missing |
 | `ml serve-model <family> <variant>` | Serve a registered GGUF via llama.cpp |
 | `ml set-vllm-env [file]` | Select the vLLM env file (copied to `configs/vllm/active.env`) |
 | `ml quantize <model> --format gguf\|exl3\|nvfp4\|all` | Quantize an HF repo id or local directory |

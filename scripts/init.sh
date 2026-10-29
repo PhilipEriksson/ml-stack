@@ -233,9 +233,12 @@ if command -v conda &>/dev/null; then
     if [ -z "$ENV_NAME" ]; then
       ENV_NAME=$(basename "$env_file" .yml)
     fi
-    if conda env list 2>/dev/null | grep -q "^${ENV_NAME} "; then
-      echo "  ✅ $ENV_NAME"
-    else
+
+    # Some envs keep their exact pins in a companion .txt (pip freeze), because
+    # the yml only declares python + pip. Creating the env is not enough.
+    PINS="$ROOT/envs/${ENV_NAME}.txt"
+
+    if ! conda env list 2>/dev/null | grep -q "^${ENV_NAME} "; then
       echo "  ⚠️  $ENV_NAME (missing)"
       if [ "$INSTALL_MODE" = true ]; then
         echo "     → Creating..."
@@ -243,7 +246,35 @@ if command -v conda &>/dev/null; then
         echo "     ✅ Created"
       else
         echo "     → Create with: conda env create -f $env_file"
+        MISSING=1
+        continue
       fi
+    fi
+
+    if [ -f "$PINS" ]; then
+      ENV_PIP=""
+      for CONDA_ROOT in "$HOME/miniconda" "$HOME/anaconda3" "$HOME/conda"; do
+        if [ -x "$CONDA_ROOT/envs/$ENV_NAME/bin/pip" ]; then
+          ENV_PIP="$CONDA_ROOT/envs/$ENV_NAME/bin/pip"
+          break
+        fi
+      done
+      FIRST_PKG=$(grep -vE '^[[:space:]]*(#|$)' "$PINS" | head -1 | cut -d= -f1 | tr '[:upper:]' '[:lower:]')
+      if [ -n "$ENV_PIP" ] && "$ENV_PIP" list 2>/dev/null | awk '{print tolower($1)}' | grep -qx "$FIRST_PKG"; then
+        echo "  ✅ $ENV_NAME (pins applied)"
+      else
+        echo "  ⚠️  $ENV_NAME (created, pins not applied)"
+        if [ "$INSTALL_MODE" = true ] && [ -n "$ENV_PIP" ]; then
+          echo "     → Installing pins from $(basename "$PINS")..."
+          "$ENV_PIP" install -q -r "$PINS"
+          echo "     ✅ Pins installed"
+        else
+          echo "     → Install with: ~/miniconda/envs/$ENV_NAME/bin/pip install -r $PINS"
+          MISSING=1
+        fi
+      fi
+    else
+      echo "  ✅ $ENV_NAME"
     fi
   done
 else
@@ -309,24 +340,36 @@ echo ""
 echo "🐳 Docker images:"
 
 if [ -n "$DOCKER_CMD" ]; then
-  # Docker Compose names images based on the project directory (services/docker/)
-  # so the prefix is "docker". e.g. "docker-vllm:latest", "docker-api-webui:latest".
-  COMPOSE_PROJECT="docker"
-  for SERVICE in vllm api-webui searxng; do
-    IMAGE="$COMPOSE_PROJECT-$SERVICE"
-    if "$DOCKER_CMD" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -q "^${IMAGE}:latest$"; then
-      echo "  ✅ $IMAGE:latest"
-    else
-      echo "  ⚠️  $IMAGE:latest (not built)"
-      if [ "$INSTALL_MODE" = true ]; then
-        echo "     → Building..."
-        (cd "$ROOT" && "$DOCKER_CMD" compose -f services/docker/docker-compose.yml build $SERVICE)
-        echo "     ✅ Built"
+  # Ask compose for the image names it will actually use instead of guessing
+  # the project prefix from the directory name.
+  COMPOSE_FILE="$ROOT/services/docker/docker-compose.yml"
+  COMPOSE_IMAGES=$("$DOCKER_CMD" compose -f "$COMPOSE_FILE" config --images 2>/dev/null || true)
+
+  if [ -z "$COMPOSE_IMAGES" ]; then
+    echo "  ⚠️  Could not resolve compose images (is configs/vllm/active.env present?)"
+    MISSING=1
+  else
+    for IMAGE in $COMPOSE_IMAGES; do
+      # compose reports untagged names; docker images lists repo:tag
+      case "$IMAGE" in
+        *:*) IMAGE_REF="$IMAGE" ;;
+        *)   IMAGE_REF="$IMAGE:latest" ;;
+      esac
+      if "$DOCKER_CMD" images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -qx "$IMAGE_REF"; then
+        echo "  ✅ $IMAGE_REF"
       else
-        echo "     → Build with: docker compose -f services/docker/docker-compose.yml build $SERVICE"
+        echo "  ⚠️  $IMAGE_REF (not built)"
+        if [ "$INSTALL_MODE" = true ]; then
+          echo "     → Building..."
+          (cd "$ROOT" && "$DOCKER_CMD" compose -f "$COMPOSE_FILE" build)
+          echo "     ✅ Built"
+        else
+          echo "     → Build with: docker compose -f services/docker/docker-compose.yml build"
+          MISSING=1
+        fi
       fi
-    fi
-  done
+    done
+  fi
 fi
 
 # =========================

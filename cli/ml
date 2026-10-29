@@ -26,6 +26,7 @@ show_global_help() {
   echo "  ml evals"
   echo "  ml compare-runs <run1> <run2>"
   echo "  ml runs"
+  echo "  ml status               # registries, backends, environments, warnings"
   echo "  ml quantize <model> --format gguf|exl3|nvfp4|all"
   echo ""
   echo "Help:"
@@ -172,6 +173,13 @@ show_help() {
     runs)
       echo "ml runs"
       echo "  Lists all recorded training runs with model, dataset, status, and timestamp"
+      ;;
+
+    status)
+      echo "ml status"
+      echo "  One-screen overview: active environments, registered models/datasets/runs,"
+      echo "  running backends, and anything missing"
+      echo "  Usage: ml status"
       ;;
 
     *)

@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 app = FastAPI(title="ML Stack API", openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -182,11 +183,32 @@ async def health():
     return {"status": "ok"}
 
 
-def _get_openapi_spec():
+async def _json_body(request: Request):
+    """Parse a JSON body, returning None for an empty or non-JSON payload.
+
+    `request.body` is a coroutine method, not a property — testing it for
+    truthiness is always true and then `await request.json()` raises on an
+    empty body.
+    """
+    raw = await request.body()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _base_url(request: Request) -> str:
+    """Public base URL of this proxy, as seen by the caller."""
+    return str(request.base_url).rstrip("/")
+
+
+def _get_openapi_spec(base_url: str):
     return {
         "openapi": "3.0.0",
         "info": {"title": "Web Search", "version": "1.0.0", "description": "Search the web using SearXNG. Returns titles, URLs, and snippets."},
-        "servers": [{"url": "http://localhost:8000"}],
+        "servers": [{"url": base_url}],
         "paths": {
             "/search": {
                 "get": {
@@ -207,34 +229,42 @@ def _get_openapi_spec():
 
 @app.get("/openapi.json")
 @app.get("/search/openapi.json")
-async def search_openapi():
-    return _get_openapi_spec()
+async def search_openapi(request: Request):
+    return _get_openapi_spec(_base_url(request))
 
 
 @app.get("/api/config")
-async def tool_server_config():
+async def tool_server_config(request: Request):
+    base = _base_url(request)
     return {
         "name": "web_search",
         "displayName": "Web Search",
         "type": "tool_server",
-        "baseUrl": "http://localhost:8000",
-        "openapi": "http://localhost:8000/openapi.json",
+        "baseUrl": base,
+        "openapi": f"{base}/openapi.json",
     }
 
 
 def _do_search(q, max_results=5, categories="general"):
-    """Search via SearXNG (primary) with DuckDuckGo fallback."""
+    """Search via SearXNG (primary) with DuckDuckGo fallback.
+
+    Blocking by design — callers run it in a threadpool so a slow search does
+    not stall the event loop for every other request.
+    """
     if SEARXNG_SERVER:
         data = {"q": q, "format": "json", "categories": [categories], "number_of_results": max_results}
         headers = {"User-Agent": "ml-stack-api", "X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
-        with httpx.Client(timeout=30) as client:
-            resp = client.post(f"{SEARXNG_SERVER}/search?language=en", data=data, headers=headers)
-            if resp.status_code == 200:
-                json_data = resp.json()
-                results = []
-                for r in json_data.get("results", [])[:max_results]:
-                    results.append({"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")})
-                return results
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(f"{SEARXNG_SERVER}/search?language=en", data=data, headers=headers)
+                if resp.status_code == 200:
+                    json_data = resp.json()
+                    results = []
+                    for r in json_data.get("results", [])[:max_results]:
+                        results.append({"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")})
+                    return results
+        except Exception as e:  # SearXNG down or malformed — fall through to DDG
+            logger.warning("SearXNG search failed (%s: %s), falling back to DuckDuckGo", type(e).__name__, e)
 
     try:
         from duckduckgo_search import DDGS
@@ -244,24 +274,28 @@ def _do_search(q, max_results=5, categories="general"):
                 results.append({"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")})
         return results
     except ImportError:
+        logger.warning("duckduckgo_search not installed and SearXNG unavailable — returning no results")
+        return []
+    except Exception as e:
+        logger.warning("DuckDuckGo search failed (%s: %s)", type(e).__name__, e)
         return []
 
 
 @app.get("/search")
-def search(q: str, categories: str = "general", number_of_results: int = 5):
-    results = _do_search(q, number_of_results, categories)
+async def search(q: str, categories: str = "general", number_of_results: int = 5):
+    results = await run_in_threadpool(_do_search, q, number_of_results, categories)
     return {"query": q, "category": categories, "results": results}
 
 
 @app.post("/search")
 async def search_json(request: Request):
-    body = await request.json()
+    body = await _json_body(request) or {}
     q = body.get("query") or body.get("q", "")
     if not q:
         return JSONResponse({"error": "Missing 'query' parameter"}, status_code=400)
     categories = body.get("categories", "general")
     max_results = body.get("max_results", 5)
-    results = _do_search(q, max_results, categories)
+    results = await run_in_threadpool(_do_search, q, max_results, categories)
     return {"query": q, "category": categories, "results": results}
 
 @app.get("/v1/models")
@@ -284,11 +318,19 @@ _CHAT_DEFAULTS = {
 }
 
 
+def _coerce(val: str):
+    """Env vars are strings; send numbers as numbers."""
+    try:
+        return int(val)
+    except ValueError:
+        return float(val)
+
+
 def _apply_defaults(payload: dict):
     """Apply configured defaults — always override (needed for spec decode)."""
     for key, val in _CHAT_DEFAULTS.items():
         if val is not None:
-            payload[key] = float(val) if val.replace(".", "", 1).replace("-", "", 1).isdigit() else int(val)
+            payload[key] = _coerce(val)
 
 
 @app.post("/v1/chat/completions")
@@ -325,9 +367,8 @@ async def responses(request: Request):
 async def proxy_v1(path: str, request: Request):
     if request.method == "GET":
         return await proxy_get(f"/v1/{path}")
-    else:
-        payload = await request.json() if request.body else None
-        return await proxy_post(f"/v1/{path}", payload)
+    payload = await _json_body(request)
+    return await proxy_post(f"/v1/{path}", payload)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
@@ -337,6 +378,5 @@ async def proxy_catchall(path: str, request: Request):
         return JSONResponse({"error": "Use the specific route handler"}, status_code=404)
     if request.method == "GET":
         return await proxy_get(f"/{path}")
-    else:
-        payload = await request.json() if request.body else None
-        return await proxy_post(f"/{path}", payload)
+    payload = await _json_body(request)
+    return await proxy_post(f"/{path}", payload)

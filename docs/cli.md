@@ -127,6 +127,10 @@ TensorBoard on `:6006` over `outputs/runs/`; Aim on `:43801` over `outputs/aim/`
 
 List registered runs, or diff two of them (model, dataset, hash, status). `compare-runs` warns when both runs used identical weights.
 
+### `ml status`
+
+Prints the active training env, the selected vLLM env, the recorded llama.cpp model, every registered model/dataset/run/eval, whether each backend is up, and a "needs attention" list. Use it before debugging anything else — it answers "what is actually configured" in one screen.
+
 ---
 
 ## Serving
@@ -148,9 +152,12 @@ ml serve-model <family> <variant> --ctx 32768 --port 8000 --fa
 | `--host` | `0.0.0.0` | bind address |
 | `--file` | registry `file` | pick one `.gguf` when the directory holds several |
 | `--threads` | `nproc` | CPU threads |
+| `--stop-vllm` | off | stop the running vLLM container first |
 | `--fa` | off | flash attention |
 
-If the registry entry has an `mmproj` field, the vision projection is loaded automatically. If the model directory holds more than one `.gguf` and no file is recorded, the command lists them and exits instead of picking one arbitrarily. The active model is recorded in `configs/llama/.active-llama` so `claude-local` and `ml eval` can find it.
+If the registry entry has an `mmproj` field, the vision projection is loaded automatically. If the model directory holds more than one `.gguf` and no file is recorded, the command lists them and exits instead of picking one arbitrarily.
+
+When a vLLM container is running, `serve-model` warns and asks before stopping it. In a non-interactive shell it leaves the container alone — pass `--stop-vllm` to stop it explicitly. The active model is recorded in `configs/llama/.active-llama` so `claude-local` and `ml eval` can find it.
 
 ### `ml set-vllm-env [file]`
 

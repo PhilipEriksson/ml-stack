@@ -70,6 +70,20 @@ ml create-training-run <run> <family>/<model> <family>/<dataset> \
 
 Resolved values are written back into the run's `config.json` and logged as hparams. Rank is never auto-selected — it is whatever the config says.
 
+`--lora-targets` accepts short names (`q,k,v,o,gate,up,down`) or full module names (`q_proj,...`); short names are expanded to `<name>_proj` before PEFT sees them.
+
+### Run knobs
+
+Optional keys in the run config, with the defaults shown. `--sample` changes the defaults for `epochs`, `batch_size`, and `grad_accum` (1 / 8 / 1) but an explicit value in the config always wins.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_seq_length` | `2048` | sequence length, set at model load |
+| `epochs` | `4` (`1` in sample mode) | training epochs |
+| `batch_size` | `2` (`8` in sample mode) | per-device batch size |
+| `grad_accum` | `4` (`1` in sample mode) | gradient accumulation steps |
+| `learning_rate` | `2e-4` adapters, `2e-5` full FT | peak LR |
+
 **Target modules matter more than rank.** Architectures with hybrid attention (some layers full attention, some linear attention) use different projection names per layer type. Targeting only the conventional names leaves most of the attention stack frozen. Check the module names in the checkpoint before assuming the default list applies.
 
 ---

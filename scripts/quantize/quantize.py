@@ -120,11 +120,6 @@ def out_root(family: str, fmt: str, bits: str, slug: str) -> Path:
 # --------------------------------------------------------------------------
 def run_format(fmt: str, model_dir: Path, cfg: dict, args) -> int:
     py = ENV_PYTHON[fmt]
-    if not py.exists():
-        print(f"ERROR: {fmt} environment missing: {py}")
-        print(f"       see {ML_STACK}/docs/quantization.md for setup")
-        return 1
-
     script = SCRIPTS / "formats" / f"{fmt}.py"
     cmd = [
         str(py), str(script),
@@ -156,7 +151,15 @@ def run_format(fmt: str, model_dir: Path, cfg: dict, args) -> int:
     print(f"\n=== {fmt} ===")
     print(" ".join(cmd))
     if args.dry_run:
+        # A dry run only prints the command; it must work before the
+        # per-format environments are installed.
         return 0
+
+    if not py.exists():
+        print(f"ERROR: {fmt} environment missing: {py}")
+        print(f"       see {ML_STACK}/docs/quantization.md for setup")
+        return 1
+
     return subprocess.call(cmd)
 
 

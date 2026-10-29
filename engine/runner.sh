@@ -34,8 +34,12 @@ case "$ACTION" in
 
   quantize)
     # Dispatcher is stdlib + huggingface_hub only; it shells out to the
-    # per-format interpreter (training / quant-exl3 / quant-nvfp4).
-    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training/bin/python")
+    # per-format interpreter (training / quant-exl3 / quant-nvfp4). Any python
+    # can run the dispatcher itself, so fall back to the system one.
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || true)
+    if [ -z "$CONDA_PYTHON" ] || [ ! -x "$CONDA_PYTHON" ]; then
+      CONDA_PYTHON=$(command -v python3 || command -v python)
+    fi
     exec "$CONDA_PYTHON" "${ML_STACK_HOME:-$HOME/ml-stack}/scripts/quantize/quantize.py" "$@"
     ;;
 
@@ -69,6 +73,10 @@ case "$ACTION" in
 
   runs)
     bash "$ROOT/ml-runs" "$@"
+    ;;
+
+  status)
+    bash "$ROOT/status" "$@"
     ;;
 
   eval)

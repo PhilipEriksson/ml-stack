@@ -32,13 +32,13 @@ if MISSING:
     print("❌ Missing required package(s):")
     print("\n".join(MISSING))
     print("")
-    print("Try: conda env create -f envs/training.yml (or envs/training-cuda13.yml)")
+    print("Try: conda env create -f envs/training.yml")
     sys.exit(1)
 
 from unsloth import FastLanguageModel
 from datasets import load_from_disk
-from transformers import TrainingArguments, TrainerCallback
-from trl import SFTTrainer
+from transformers import TrainerCallback
+from trl import SFTConfig, SFTTrainer
 import json
 
 
@@ -95,9 +95,9 @@ if not dataset_path:
 # -------------------------
 # WARN IF USING QUANTIZED MODEL
 # -------------------------
-if model_type == "gguf":
-    print("❌ Cannot fine-tune GGUF models with Unsloth.")
-    print("   Download a base model instead: add-model auto <hf-repo> --type base")
+if model_type in ("gguf", "quantized"):
+    print(f"❌ Cannot fine-tune a {model_type} model with Unsloth.")
+    print("   Download the base weights instead: add-model auto <hf-repo> --type base")
     sys.exit(1)
 
 # -------------------------
@@ -120,10 +120,28 @@ print(f"🧠 Method: {METHOD}")
 # plain LoRA), so existing configs keep behaving identically.
 DEFAULT_LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj",
                         "gate_proj", "up_proj", "down_proj"]
+
+
+def normalize_targets(targets):
+    """Accept both short names (q, gate) and full module names (q_proj).
+
+    `create-training-run --lora-targets` documents the short form, while PEFT
+    matches on the full module name; passing "q" straight through silently
+    attaches adapters to nothing.
+    """
+    out = []
+    for t in targets:
+        t = str(t).strip()
+        if not t:
+            continue
+        out.append(t if "_proj" in t else f"{t}_proj")
+    return out
+
+
 LORA_R = int(config.get("lora_r", 16))
 LORA_ALPHA = int(config.get("lora_alpha", LORA_R))
 LORA_DROPOUT = float(config.get("lora_dropout", 0.0))
-LORA_TARGETS = config.get("lora_target_modules", DEFAULT_LORA_TARGETS)
+LORA_TARGETS = normalize_targets(config.get("lora_target_modules", DEFAULT_LORA_TARGETS))
 LORA_RSLORA = bool(config.get("lora_rslora", False))
 LORA_BIAS = config.get("lora_bias", "none")
 
@@ -181,10 +199,14 @@ except Exception as e:  # tracking is optional — never block training on it
 # -------------------------
 # LOAD MODEL
 # -------------------------
+# Sequence length is a run-config knob; it has to be set at load time so
+# Unsloth can size the RoPE cache and the 4-bit buffers.
+MAX_SEQ_LEN = int(config.get("max_seq_length", 2048))
+
 print(f"🤖 Loading model: {model_path}")
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_path,
-    max_seq_length=2048,
+    max_seq_length=MAX_SEQ_LEN,
     load_in_4bit=(METHOD == "qlora"),
 )
 
@@ -309,34 +331,34 @@ output_dir = os.path.join(run_dir, "artifacts")
 # transformers 5.x: TensorBoard event dir comes from this env var (not a TrainingArguments arg)
 os.environ["TENSORBOARD_LOGGING_DIR"] = os.path.join(run_dir, "logs")
 
-# Calculate training steps for warmup_steps
+# Hyperparameters: run-config knobs, with sample-mode defaults.
 if args.sample:
-    num_epochs = 1
-    batch_size = 8
-    accum_steps = 1
-    logging_every = 50
+    default_epochs, default_batch, default_accum, logging_every = 1, 8, 1, 50
 else:
-    num_epochs = 4
-    batch_size = 2
-    accum_steps = 4
-    logging_every = 1
+    default_epochs, default_batch, default_accum, logging_every = 4, 2, 4, 1
+
+num_epochs = float(config.get("epochs", default_epochs))
+batch_size = int(config.get("batch_size", default_batch))
+accum_steps = int(config.get("grad_accum", default_accum))
+# Adapters want a high LR; full FT wants ~10x lower
+learning_rate = float(config.get("learning_rate",
+                                 2e-4 if METHOD != "fullft" else 2e-5))
 
 total_steps = (len(train_dataset) // (batch_size * accum_steps)) * num_epochs
 warmup_steps = max(1, int(total_steps * 0.05))
 
-# Adapters want a high LR; full FT wants ~10x lower
-learning_rate = 2e-4 if METHOD != "fullft" else 2e-5
+print(f"⚙️  epochs={num_epochs} batch={batch_size} accum={accum_steps} "
+      f"lr={learning_rate} max_len={MAX_SEQ_LEN}")
 
+# TRL 1.x: sequence length and packing live on SFTConfig, and the tokenizer is
+# passed as processing_class. The old SFTTrainer(tokenizer=..., max_seq_length=...,
+# packing=...) signature raises TypeError on trl >= 1.0.
 trainer = SFTTrainer(
     model=model,
-    tokenizer=tokenizer,
-    train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
-    formatting_func=formatting_func,
-    max_seq_length=2048,
-    packing=False,
-    args=TrainingArguments(
+    args=SFTConfig(
         output_dir=output_dir,
+        max_length=MAX_SEQ_LEN,
+        packing=False,
         num_train_epochs=num_epochs,
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=accum_steps,
@@ -352,6 +374,10 @@ trainer = SFTTrainer(
         eval_strategy="epoch" if eval_dataset else "no",
         report_to="tensorboard",
     ),
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    processing_class=tokenizer,
+    formatting_func=formatting_func,
 )
 
 if aim_run:

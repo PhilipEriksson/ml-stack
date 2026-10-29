@@ -92,6 +92,15 @@ Rather than fight that, `scripts/quantize/quantize.py` runs in any Python (stdli
 | Add a benchmark task | pass it to `ml eval`; lm-eval resolves task names itself |
 | Add a Docker service | `services/<name>/` + a service block in `services/docker/docker-compose.yml` |
 
+## Tests
+
+```bash
+bash tests/run.sh              # all
+bash tests/run.sh add-model    # one file
+```
+
+Shell-level smoke tests. Each one builds a throwaway stack (registries, `models/`, `outputs/`) and points `ML_STACK_HOME` at it, stubbing `hf`, `curl`, `lm-eval`, `docker`, and `llama-server` on PATH — so the suite needs no network, no GPU, and no Docker, and never touches real state. They cover the paths that break silently: model type detection, GGUF file selection, registry writes, eval result parsing, and CLI help/dispatch consistency.
+
 ## Conventions
 
 - **Bash for orchestration, Python for work.** Scripts under `scripts/utils/` are bash; anything that touches tensors or datasets is Python under `scripts/train/` or `scripts/quantize/`.

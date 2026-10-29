@@ -114,7 +114,7 @@ ml serve-model <family> <variant> --file <model>-Q4_K_M.gguf --threads 8
 
 The script resolves the registry entry, uses the recorded `file` (or `--file`) to pick the `.gguf`, and launches `runtimes/llama.cpp/build/bin/llama-server`. If the entry has an `mmproj`, the vision projection is loaded too. A directory with several `.gguf` files and no recorded choice is an error, not a guess.
 
-Before launching it checks whether the vLLM container is running and offers to stop it — both backends on one GPU will contend for VRAM.
+Before launching it checks whether the vLLM container is running and offers to stop it — both backends on one GPU will contend for VRAM. In a non-interactive shell it leaves the container running; pass `--stop-vllm` to stop it explicitly.
 
 The active model is written to `configs/llama/.active-llama`, which `claude-local` and `ml eval` read.
 
