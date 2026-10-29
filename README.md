@@ -440,6 +440,40 @@ ml execute-training-run my-run --sample
 
 **Recommended for Qwen3-0.6B:** Start with a 1,000 or 5,000 sample to verify the pipeline, then run the full dataset with `ml execute-training-run my-run` (4 epochs, batch=2) once satisfied.
 
+#### Training runs
+
+Actual runs, with what was measured rather than what was hoped for.
+
+**`qwopus-0.8b` — Qwen3.5-0.8B, Opus reasoning distillation (2026-10-28)**
+
+Reproducing the pipeline behind the larger "Opus-distilled" Qwen releases at a size that
+trains in under half an hour on one consumer GPU.
+
+| | |
+|---|---|
+| Base | `Qwen/Qwen3.5-0.8B` (604M non-embedding, hybrid linear attention) |
+| Method | LoRA SFT, response-only loss |
+| Data | 3 datasets → 3,191 rows normalized → **2,917** after length filter |
+| LoRA | `r=64`, `alpha=64`, dropout 0, 43.29M trainable (4.83%) |
+| SFT | 4-bit base, `max_length=16384`, batch 8 × GA 4, 2 epochs, lr 2e-4 |
+| Result | 184 steps, **25.1 min**, loss 0.8153 → 0.6618 (plateau), best step 0.4458 |
+| Tracking | Aim experiment `qwopus-0.8b` |
+
+Three things this run established that a naive copy of the reference notebook gets wrong:
+
+1. **LoRA target modules.** Qwen3.5 uses hybrid attention — only 6 of 24 layers are full
+   attention (`q/k/v/o_proj`); the other 18 are linear attention (`in_proj_qkv`,
+   `in_proj_z`, `in_proj_b`, `in_proj_a`, `out_proj`). Targeting only the conventional
+   projection names leaves most of the attention stack frozen.
+2. **` thinking` and `</think>` are special tokens** (ids 248068/248069), not literal
+   strings. A masking marker written as `" think"` matches nothing and masks every label.
+3. **`enable_thinking=True` is required at inference.** The chat template defaults it off,
+   rendering an empty think block, and the model then answers with no reasoning at all.
+
+The loss plateaued at ~0.66 rather than the ~0.24 reported for the 4B version of this
+recipe. That gap is model capacity and data volume, not a training bug — 604M parameters
+over 2,917 samples for 2 epochs.
+
 ### Run Tracking
 
 **List all training runs:**
@@ -452,6 +486,120 @@ ml runs
 ml compare-runs <run1> <run2>
 ```
 Shows model version, dataset, and model hash for each run. Warns if both use identical weights.
+
+### Quantization
+
+Turn a trained (or downloaded) model into a distributable compressed format. Three
+formats, one command, reusable across models.
+
+```bash
+ml quantize <model> --format gguf  --quants Q4_K_M,Q8_0
+ml quantize <model> --format exl3  --bpw 4.0,3.0
+ml quantize <model> --format nvfp4 --calib <dataset-or-jsonl> --samples 256
+ml quantize <model> --format all   --dry-run
+```
+
+`<model>` is an HF repo id **or** a local directory — quantizing a model you just trained
+is the same code path as quantizing something off the Hub.
+
+#### The three formats
+
+| Format | What it is | Runtime | Needs calibration |
+|---|---|---|---|
+| **GGUF** | Block-wise integer quantization (Q4_K_M, Q8_0…) | llama.cpp, Ollama, LM Studio | no |
+| **EXL3** | QTIP trellis-coded quantization, 2–8 bpw | exllamav3, TabbyAPI | no (Hessians on the fly) |
+| **NVFP4** | NVIDIA 4-bit float, W4A4, two-level micro-block scaling | vLLM (Blackwell) | **yes** |
+
+#### Why three environments
+
+Each format needs a different toolchain, and they conflict:
+
+| Format | Tool | Interpreter | Why separate |
+|---|---|---|---|
+| GGUF | Unsloth's bundled llama.cpp converter | `training-cuda13` | Unsloth lives there |
+| EXL3 | exllamav3 | `quant-exl3` | Wheels pinned to `torch 2.10.0+cu128`; training env is `2.14.1+cu130` |
+| NVFP4 | llm-compressor | `quant-nvfp4` | Pins its own `transformers`/`compressed-tensors` |
+
+`scripts/quantize/quantize.py` is stdlib + `huggingface_hub` only. It resolves the model and
+architecture, then shells out to the right interpreter per format — so the dispatcher runs
+anywhere and the format modules never see each other's dependencies.
+
+**Creating a quant and serving it are different toolchains.** NVFP4 *creation* is
+llm-compressor and runs on any CUDA GPU; FP4 tensor cores only matter for *running* W4A4
+inference. Serving is vLLM with SM120 kernels compiled in — a separate problem.
+
+#### Output layout
+
+```
+models/quantized/<family>/<format>/<bits>/<slug>/
+```
+
+Matches the existing convention, so `ml add-model` and the serving commands find results
+without changes. Working directories go to `outputs/quantize/<slug>/`.
+
+#### Architecture gating
+
+Every run reads `config.json` → `architectures[0]` and checks it against the target tool's
+support table. An unsupported architecture fails loudly with the supported list rather than
+producing a silently broken artifact. NVFP4 ignore lists are per-architecture in
+`scripts/quantize/configs/nvfp4-ignore.yaml`; an unknown architecture falls back to
+`lm_head` only with a printed warning.
+
+#### Verification
+
+```bash
+python scripts/quantize/verify.py \
+  --artifact hf:bf16:/path/to/merged_16bit \
+  --artifact gguf:Q4_K_M:/path/to/model-Q4_K_M.gguf \
+  --artifact exl3:4.0bpw:/path/to/exl3-dir \
+  --out report.json
+```
+
+Runs a fixed prompt set through each artifact and records output length, whether the
+reasoning block survived, and whether an expected substring appeared. JSON output so
+results diff across runs instead of being eyeballed.
+
+#### Measured results — `qwopus-0.8b`
+
+All six artifacts, same three prompts, `scripts/quantize/summarize.py`:
+
+| Artifact | Kind | Size | Reasoning block | Expected answer |
+|---|---|---:|---|---|
+| BF16 (baseline) | hf | 1.7 GB | 3/3 | 3/3 |
+| GGUF Q8_0 | gguf | 834 MB | 3/3 | 3/3 |
+| GGUF Q4_K_M | gguf | 542 MB | 3/3 | 3/3 |
+| EXL3 4.0 bpw | exl3 | 1.08 GB | 3/3 | 3/3 |
+| EXL3 3.0 bpw | exl3 | 1.02 GB | 3/3 | **2/3** |
+| NVFP4 | hf | 892 MB | 3/3 | 3/3 |
+
+**The one cliff:** EXL3 at 3.0 bpw dropped the `code` prompt — the output no longer
+contained a function definition. Everything else held. That is the first measurable
+degradation in this set, and it appeared at the lowest bitrate, which is the expected
+direction.
+
+**EXL3 is larger than GGUF Q4_K_M despite a lower decoder bitrate** because the vision
+tower is quantized at 6 bpw and the MTP head is kept — the decoder is 3.0/4.0 bpw, not the
+whole file. Size comparisons across formats are not apples-to-apples.
+
+Caveat: three prompts is a smoke test, not a benchmark. It catches gross breakage and
+obvious cliffs; it cannot rank formats by quality. For that, run a real eval suite.
+
+#### Pitfalls
+
+- **Two concurrent `conda create` calls corrupt the package cache** — they share
+  `~/miniconda/pkgs` and collide on `.partial` extraction. Serialize them.
+- **`import exllamav3_ext` alone fails** with a misleading `libc10.so` error. Import torch
+  first.
+- **`convert.py` is not in the exllamav3 wheel** — clone the repo into `runtimes/`.
+- **Unsloth's merge output is an incomplete model directory.** For multimodal architectures
+  it omits `preprocessor_config.json` and `video_preprocessor_config.json`, which EXL3's
+  config reader requires. Copy them from the base model first.
+- **Stock llama.cpp's converter is broken for `qwen3_5`** (issue #27019, closed as not
+  planned) — `_reorder_v_heads` hardcodes `head_dim=1` and doesn't expand
+  `in_proj_a`/`in_proj_b`. Unsloth's staged converter handles it; the runtime was never
+  affected.
+- **llama-cli renders the closing think token as `[End thinking]`**, not the raw token, so
+  a naive `close_tag in output` check reports a false negative.
 
 ### Help
 ```bash

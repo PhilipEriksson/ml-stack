@@ -27,6 +27,7 @@ show_global_help() {
   echo "  ml evals"
   echo "  ml compare-runs <run1> <run2>"
   echo "  ml runs"
+  echo "  ml quantize <model> --format gguf|exl3|nvfp4|all"
   echo ""
   echo "Help:"
   echo "  ml help <command>"

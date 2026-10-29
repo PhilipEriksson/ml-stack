@@ -1,0 +1,36 @@
+# NVFP4 ignore lists, keyed on config.json -> architectures[0].
+#
+# NVFP4 quantizes both weights and activations (W4A4). Very small linear layers
+# cost more in FP4 kernel dispatch overhead than they save, so they stay BF16.
+# lm_head is excluded by convention.
+#
+# These are starting points, not gospel. Verify by comparing output quality with
+# and without each entry — the threshold depends on layer size, which varies by
+# model scale.
+
+Qwen3_5ForConditionalGeneration:
+  - "re:.*linear_attn.conv1d"      # small conv — FP4 dispatch > BF16 cost
+  - "re:.*linear_attn.in_proj_ba"  # small proj — same reason
+  - "lm_head"
+
+Qwen3_5MoeForConditionalGeneration:
+  - "re:.*linear_attn.conv1d"
+  - "re:.*linear_attn.in_proj_ba"
+  - "re:.*mlp.gate"                # router — routing errors cascade
+  - "lm_head"
+
+Qwen3ForCausalLM:
+  - "lm_head"
+
+Qwen3MoeForCausalLM:
+  - "re:.*mlp.gate"
+  - "lm_head"
+
+LlamaForCausalLM:
+  - "lm_head"
+
+# Fallback when the architecture has no tuned entry. Conservative: only lm_head.
+# The toolkit prints a warning when this is used, because the small-layer
+# threshold has not been measured for that architecture.
+default:
+  - "lm_head"

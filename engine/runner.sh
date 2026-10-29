@@ -32,6 +32,13 @@ case "$ACTION" in
     exec "$(dirname "$CONDA_PYTHON")/aim" up --repo "${ML_STACK_HOME:-$HOME/ml-stack}/outputs/aim" --host 0.0.0.0 --port 43801
     ;;
 
+  quantize)
+    # Dispatcher is stdlib + huggingface_hub only; it shells out to the
+    # per-format interpreter (training-cuda13 / quant-exl3 / quant-nvfp4).
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training-cuda13/bin/python")
+    exec "$CONDA_PYTHON" "${ML_STACK_HOME:-$HOME/ml-stack}/scripts/quantize/quantize.py" "$@"
+    ;;
+
   kill-training)
     bash "$ROOT/kill-training"
     ;;

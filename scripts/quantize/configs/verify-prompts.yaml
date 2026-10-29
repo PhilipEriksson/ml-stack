@@ -1,0 +1,49 @@
+# Verification prompts, used by verify.py to compare quantized artifacts against
+# the BF16 baseline.
+#
+# Each entry: id, prompt, and an optional `expect` substring that a correct answer
+# should contain. `expect` is a smoke signal, not a benchmark — a model can be
+# right without matching the string, and wrong while matching it.
+#
+# Override per run with --prompts <file>.
+
+default:
+  - id: arithmetic
+    prompt: >-
+      A train travels 240 km in 3 hours, then 180 km in 2 hours.
+      What is its average speed for the whole journey?
+    expect: "84"
+
+  - id: code
+    prompt: >-
+      Write a Python function that returns the two largest numbers in a list
+      without using sorted() or max().
+    expect: "def"
+
+  - id: logic
+    prompt: >-
+      Three boxes are labelled Apples, Oranges, and Mixed, but every label is
+      wrong. You may draw one fruit from one box. How do you determine the
+      contents of all three?
+    expect: "Mixed"
+
+# Per-model overrides. Keyed on the model slug.
+qwopus-0.8b:
+  - id: arithmetic
+    prompt: >-
+      A train travels 240 km in 3 hours, then 180 km in 2 hours.
+      What is its average speed for the whole journey?
+    expect: "84"
+
+  - id: code
+    prompt: >-
+      Write a Python function that returns the two largest numbers in a list
+      without using sorted() or max().
+    expect: "def"
+
+  - id: logic
+    prompt: >-
+      Three boxes are labelled Apples, Oranges, and Mixed, but every label is
+      wrong. You may draw one fruit from one box. How do you determine the
+      contents of all three?
+    expect: "Mixed"
