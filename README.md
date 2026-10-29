@@ -474,6 +474,11 @@ The loss plateaued at ~0.66 rather than the ~0.24 reported for the 4B version of
 recipe. That gap is model capacity and data volume, not a training bug — 604M parameters
 over 2,917 samples for 2 epochs.
 
+The run is published as
+[Qwen3.5-0.8B-Opus-Reasoning-Distilled](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled)
+with a LoRA adapter and three quantizations — see
+[Publishing to the Hub](#publishing-to-the-hub).
+
 ### Run Tracking
 
 **List all training runs:**
@@ -622,6 +627,38 @@ obvious cliffs; it cannot rank formats by quality. For that, run a real eval sui
   affected.
 - **llama-cli renders the closing think token as `[End thinking]`**, not the raw token, so
   a naive `close_tag in output` check reports a false negative.
+
+#### Publishing to the Hub
+
+One repo per format, suffixed from the base model's repo id:
+
+```
+<base>-GGUF     Q4_K_M + Q8_0 as single files
+<base>-EXL3     4.0bpw/ and 3.0bpw/ subdirectories
+<base>-NVFP4    backbone + MTP head at the repo root
+```
+
+Group the family in a Hub collection so the base, adapter, and every quant are reachable
+from any one of them.
+
+**`hf upload` commits at the end.** It uploads every file and creates one commit when the
+whole folder lands, so a multi-GB repo shows only `.gitattributes` while it runs. That is
+not a failed upload — judge the repo after the commit URL prints. If the card must be
+visible immediately, upload `README.md` as its own commit first.
+
+**Quantized repos need `base_model_relation: quantized`** in the card frontmatter.
+Without it the Hub tags the repo `base_model:finetune:<base>` instead of
+`base_model:quantized:<base>`, so it does not show as a quantization of the base model.
+`library_name: gguf` infers it; EXL3 and NVFP4 do not.
+
+Published family — `qwopus-0.8b`:
+
+- [Qwen3.5-0.8B-Opus-Reasoning-Distilled](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled) — BF16 base
+- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-LoRA](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-LoRA) — adapter
+- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-GGUF](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-GGUF)
+- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-EXL3](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-EXL3)
+- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-NVFP4](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-NVFP4)
+- [Collection](https://huggingface.co/collections/PhilipEriksson/qwen35-08b-opus-reasoning-distilled-6ae3336176ac243223f27ee9)
 
 ### Help
 ```bash
