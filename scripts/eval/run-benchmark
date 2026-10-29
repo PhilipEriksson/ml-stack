@@ -104,8 +104,10 @@ echo "   Batch size: $BATCH_SIZE"
 echo "   Output: $OUT_DIR"
 echo ""
 
-# Record files before the run so we can find the new result file
-BEFORE=$(find "$OUT_DIR" -maxdepth 1 -name "*.json" 2>/dev/null | sort)
+# Timestamp the run so the new result file can be identified by mtime.
+# lm-eval writes into a per-model subdirectory under --output_base_dir, so this
+# has to recurse — a maxdepth-1 find never sees the results.
+START_TS=$(date +%s)
 
 $LM_EVAL_CMD \
   --model openai-compat \
@@ -115,18 +117,13 @@ $LM_EVAL_CMD \
   --output_base_dir "$OUT_DIR" \
   --log_samples
 
-# Find the new results JSON file (main metrics, not samples)
-AFTER=$(find "$OUT_DIR" -maxdepth 1 -name "*.json" 2>/dev/null | sort)
-RESULT_FILE=""
-for f in $AFTER; do
-  if ! echo "$BEFORE" | grep -qF "$f"; then
-    # Skip sample files
-    if ! basename "$f" | grep -q "^samples_"; then
-      RESULT_FILE="$f"
-      break
-    fi
-  fi
-done
+# Find the results file written by this run (newest results_*.json since start).
+# mtime beats a before/after diff: a re-run that overwrites the same filename is
+# still detected.
+RESULT_FILE=$(find "$OUT_DIR" -type f -name "results_*.json" -newermt "@$START_TS" 2>/dev/null | sort | tail -n 1)
+if [ -z "$RESULT_FILE" ]; then
+  RESULT_FILE=$(find "$OUT_DIR" -type f -name "results_*.json" 2>/dev/null | sort | tail -n 1)
+fi
 
 echo ""
 
@@ -138,11 +135,12 @@ mkdir -p "$ROOT/configs/evals"
 [ -s "$EVALS_REG" ] || echo '{}' > "$EVALS_REG"
 
 if [ -n "$RESULT_FILE" ]; then
-  # Extract scores from the result file
+  # Extract scores from the result file. `from_entries` (not from_object) —
+  # the latter does not exist in jq and silently produced empty scores.
   SCORES=$(jq -c '
     .results // {} | to_entries |
     map({key: .key, value: (.value.accuracy // .value.exact_match // .value.f1 // .value)}) |
-    from_object
+    from_entries
   ' "$RESULT_FILE" 2>/dev/null || echo '{}')
 
   TMP=$(mktemp)
