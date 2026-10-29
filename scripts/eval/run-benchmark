@@ -1,22 +1,157 @@
 #!/usr/bin/env bash
-# Run lm-eval against your active inference backend (vLLM Docker or llama.cpp)
+# Run lm-eval against the active inference backend (vLLM Docker or llama.cpp).
+#
 # Usage:
-#   ml eval                          # default tasks, batch_size=4
-#   ml eval mmlu,gsm8k               # specific tasks
-#   ml eval mmlu,ifeval 8            # specific tasks, batch_size=8
+#   ml eval                          # core suite, batch 4
+#   ml eval --suite reasoning        # harder reasoning suite
+#   ml eval --suite all              # core + reasoning
+#   ml eval mmlu,gsm8k               # explicit tasks
+#   ml eval mmlu,gsm8k 8             # explicit tasks, batch 8
+#   ml eval --limit 5                # smoke test: 5 examples per task
+#   ml eval --prefetch               # download datasets, run nothing
+#   ml eval --list-suites            # show the suites and their tasks
+#
+# Suites live in configs/eval-suites.json.
 
 ROOT="${ML_STACK_HOME:-$HOME/ml-stack}"
+SUITES="$ROOT/configs/eval-suites.json"
 
 set -e
 
 # =========================
+# ARGUMENTS
+# =========================
+SUITE=""
+TASKS=""
+BATCH_SIZE="4"
+LIMIT=""
+PREFETCH=false
+LIST_SUITES=false
+CHAT_TEMPLATE=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --suite)       SUITE="$2"; shift 2 ;;
+    --tasks)       TASKS="$2"; shift 2 ;;
+    --batch)       BATCH_SIZE="$2"; shift 2 ;;
+    --limit)       LIMIT="$2"; shift 2 ;;
+    --prefetch)    PREFETCH=true; shift ;;
+    --list-suites) LIST_SUITES=true; shift ;;
+    --chat-template) CHAT_TEMPLATE=true; shift ;;
+    -h|--help)     sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)
+      # Backwards-compatible positional form: tasks [batch]
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        BATCH_SIZE="$1"
+      else
+        TASKS="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+# =========================
+# SUITES
+# =========================
+suite_tasks() {
+  [ -f "$SUITES" ] || return 1
+  jq -r --arg s "$1" '.[$s].tasks // empty | join(",")' "$SUITES" 2>/dev/null
+}
+
+if [ "$LIST_SUITES" = true ]; then
+  if [ ! -f "$SUITES" ]; then
+    echo "❌ No suites file at $SUITES"
+    exit 1
+  fi
+  jq -r 'to_entries[] | select(.value | type == "object") | "\(.key)\n  \(.value.description // "")\n  \(.value.tasks | join(", "))\n"' "$SUITES"
+  exit 0
+fi
+
+if [ -n "$SUITE" ]; then
+  SUITE_TASKS=$(suite_tasks "$SUITE" || true)
+  if [ -z "$SUITE_TASKS" ]; then
+    echo "❌ Unknown suite: $SUITE"
+    echo "   Available: $(jq -r 'keys | join(", ")' "$SUITES" 2>/dev/null || echo 'none')"
+    exit 1
+  fi
+  TASKS="$SUITE_TASKS"
+fi
+
+if [ -z "$TASKS" ]; then
+  TASKS=$(suite_tasks core || true)
+fi
+if [ -z "$TASKS" ]; then
+  echo "❌ No tasks selected and no 'core' suite in $SUITES"
+  exit 1
+fi
+
+# lm-eval 0.4.x takes space-separated task names
+TASK_ARGS=$(echo "$TASKS" | tr ',' ' ')
+
+# =========================
+# RESOLVE lm-eval
+# =========================
+# ML_EVAL_BIN wins (tests, or a harness installed elsewhere); then the dedicated
+# eval env; then PATH.
+LM_EVAL_CMD="${ML_EVAL_BIN:-}"
+if [ -z "$LM_EVAL_CMD" ]; then
+  for candidate in "$HOME/miniconda/envs/eval/bin/lm-eval" \
+                   "$HOME/anaconda3/envs/eval/bin/lm-eval" \
+                   "$HOME/conda/envs/eval/bin/lm-eval"; do
+    if [ -x "$candidate" ]; then
+      LM_EVAL_CMD="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$LM_EVAL_CMD" ]; then
+  if command -v lm-eval &>/dev/null; then
+    LM_EVAL_CMD="lm-eval"
+  elif command -v lm_eval &>/dev/null; then
+    LM_EVAL_CMD="lm_eval"
+  fi
+fi
+
+if [ -z "$LM_EVAL_CMD" ]; then
+  echo "❌ lm-eval not found."
+  echo "   Create the eval env: conda env create -f envs/eval.yml"
+  exit 1
+fi
+
+# =========================
+# PREFETCH
+# =========================
+# The dummy model downloads each task's dataset and answers instantly, so this
+# warms the HF cache without needing a running server.
+if [ "$PREFETCH" = true ]; then
+  echo "📥 Prefetching datasets for: $TASK_ARGS"
+  PREFETCH_DIR=$(mktemp -d)
+  if "$LM_EVAL_CMD" run --model dummy --tasks $TASK_ARGS --limit 1 \
+       --output_path "$PREFETCH_DIR" >/dev/null 2>&1; then
+    echo "✅ Datasets cached"
+    rm -rf "$PREFETCH_DIR"
+    exit 0
+  fi
+  echo "❌ Prefetch failed — run without --prefetch to see the error"
+  rm -rf "$PREFETCH_DIR"
+  exit 1
+fi
+
+# =========================
 # DETECT ACTIVE BACKEND
 # =========================
-BACKEND_MODEL=""
-BACKEND_URL=""
+# ML_EVAL_BACKEND_URL / ML_EVAL_MODEL override detection — useful for a remote
+# endpoint, or for pointing the harness at a stub in tests.
+BACKEND_MODEL="${ML_EVAL_MODEL:-}"
+BACKEND_URL="${ML_EVAL_BACKEND_URL:-}"
 BACKEND_TYPE="vllm"
 
-# --- 1. Try vLLM Docker container (running) ---
+if [ -n "$BACKEND_URL" ]; then
+  BACKEND_MODEL="${BACKEND_MODEL:-custom}"
+  BACKEND_TYPE="custom"
+fi
+
 DOCKER_CMD=""
 if command -v docker &>/dev/null; then
   DOCKER_CMD="docker"
@@ -26,7 +161,7 @@ elif [ -f "/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe" ]; then
   DOCKER_CMD="/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"
 fi
 
-if [ -n "$DOCKER_CMD" ]; then
+if [ -n "$DOCKER_CMD" ] && [ -z "$BACKEND_URL" ]; then
   VLLM_RUNNING=$("$DOCKER_CMD" ps --filter "name=vllm-server" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
   if [ -n "$VLLM_RUNNING" ]; then
     MODEL_NAME=$("$DOCKER_CMD" inspect vllm-server --format '{{range .Config.Env}}{{if (hasPrefix . "MODEL_NAME=")}}{{.}}{{end}}{{end}}' 2>/dev/null | sed 's/^MODEL_NAME=//')
@@ -38,7 +173,6 @@ if [ -n "$DOCKER_CMD" ]; then
   fi
 fi
 
-# --- 2. Fallback: configs/vllm/active.env ---
 if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/vllm/active.env" ]; then
   ACTIVE_MODEL=$(grep '^MODEL_NAME=' "$ROOT/configs/vllm/active.env" | sed 's/^MODEL_NAME=//')
   if [ -n "$ACTIVE_MODEL" ]; then
@@ -48,7 +182,6 @@ if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/vllm/active.env" ]; then
   fi
 fi
 
-# --- 3. Fallback: active llama.cpp server ---
 if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/llama/.active-llama" ]; then
   ACTIVE=$(cat "$ROOT/configs/llama/.active-llama")
   if curl -sf --max-time 2 http://localhost:8000/v1/models >/dev/null 2>&1; then
@@ -67,59 +200,57 @@ fi
 
 echo "🔌 Backend: $BACKEND_MODEL @ $BACKEND_URL ($BACKEND_TYPE)"
 
-# =========================
-# INPUT
-# =========================
-TASKS="${1:-mmlu,gsm8k,hellaswag,arc_challenge}"
-BATCH_SIZE="${2:-4}"
-
-# Sanitize model name for filename
 SLUG=$(echo "$BACKEND_MODEL" | tr '/ ' '-' | tr '[:upper:]' '[:lower:]')
 TS=$(date +%Y-%m-%d_%H-%M)
 OUT_DIR="$ROOT/outputs/evals"
 mkdir -p "$OUT_DIR"
 
-# =========================
-# CHECK lm-eval
-# =========================
-if ! command -v lm-eval &>/dev/null && ! command -v lm_eval &>/dev/null; then
-  echo "❌ lm-eval not found."
-  echo "   Install with: pip install 'lm-eval[multitask]'"
-  echo "   Or: conda activate <training-env> && pip install 'lm-eval[multitask]'"
-  exit 1
-fi
+echo "🧠 Running benchmark..."
+echo "   Tasks: $TASK_ARGS"
+echo "   Batch size: $BATCH_SIZE"
+[ -n "$LIMIT" ] && echo "   Limit: $LIMIT examples per task"
+echo "   Output: $OUT_DIR"
+echo ""
 
 # =========================
 # RUN
 # =========================
-# Resolve lm-eval command (installed as lm-eval or lm_eval depending on pip version)
-LM_EVAL_CMD="lm-eval"
-if ! command -v lm-eval &>/dev/null; then
-  LM_EVAL_CMD="lm_eval"
+# local-completions, not local-chat-completions: multiple-choice tasks need
+# loglikelihood, which the chat endpoint does not support. The completions API
+# also needs a tokenizer to compute token boundaries.
+TOKENIZER="${ML_EVAL_TOKENIZER:-$BACKEND_MODEL}"
+if [ -z "$TOKENIZER" ]; then
+  echo "❌ No tokenizer for lm-eval."
+  echo "   Set ML_EVAL_TOKENIZER to an HF repo id or a local model directory."
+  exit 1
 fi
 
-echo "🧠 Running benchmark..."
-echo "   Tasks: $TASKS"
-echo "   Batch size: $BATCH_SIZE"
-echo "   Output: $OUT_DIR"
-echo ""
-
-# Timestamp the run so the new result file can be identified by mtime.
-# lm-eval writes into a per-model subdirectory under --output_base_dir, so this
-# has to recurse — a maxdepth-1 find never sees the results.
 START_TS=$(date +%s)
 
-$LM_EVAL_CMD \
-  --model openai-compat \
-  --model_args "model=${SLUG},base_url=${BACKEND_URL},temperature=0.2" \
-  --tasks "$TASKS" \
-  --batch_size "$BATCH_SIZE" \
-  --output_base_dir "$OUT_DIR" \
-  --log_samples
+RUN_ARGS=(run
+  --model local-completions
+  --model_args "model=${SLUG}" "base_url=${BACKEND_URL}/completions" "tokenizer=${TOKENIZER}"
+  --tasks $TASK_ARGS
+  --batch_size "$BATCH_SIZE"
+  --output_path "$OUT_DIR"
+  --log_samples)
 
-# Find the results file written by this run (newest results_*.json since start).
-# mtime beats a before/after diff: a re-run that overwrites the same filename is
-# still detected.
+[ -n "$LIMIT" ] && RUN_ARGS+=(--limit "$LIMIT")
+[ "$CHAT_TEMPLATE" = true ] && RUN_ARGS+=(--apply_chat_template)
+
+set +e
+"$LM_EVAL_CMD" "${RUN_ARGS[@]}"
+RUN_RC=$?
+set -e
+
+if [ "$RUN_RC" -ne 0 ]; then
+  echo ""
+  echo "❌ lm-eval exited $RUN_RC — no registry entry written"
+  exit "$RUN_RC"
+fi
+
+# Newest results file since the run started. mtime beats a before/after diff:
+# a re-run that overwrites the same filename is still detected.
 RESULT_FILE=$(find "$OUT_DIR" -type f -name "results_*.json" -newermt "@$START_TS" 2>/dev/null | sort | tail -n 1)
 if [ -z "$RESULT_FILE" ]; then
   RESULT_FILE=$(find "$OUT_DIR" -type f -name "results_*.json" 2>/dev/null | sort | tail -n 1)
@@ -134,43 +265,78 @@ EVALS_REG="$ROOT/configs/evals/registry.json"
 mkdir -p "$ROOT/configs/evals"
 [ -s "$EVALS_REG" ] || echo '{}' > "$EVALS_REG"
 
-if [ -n "$RESULT_FILE" ]; then
-  # Extract scores from the result file. `from_entries` (not from_object) —
-  # the latter does not exist in jq and silently produced empty scores.
-  SCORES=$(jq -c '
-    .results // {} | to_entries |
-    map({key: .key, value: (.value.accuracy // .value.exact_match // .value.f1 // .value)}) |
-    from_entries
-  ' "$RESULT_FILE" 2>/dev/null || echo '{}')
-
-  TMP=$(mktemp)
-  jq --arg slug "$SLUG" \
-     --arg ts "$TS" \
-     --arg model "$BACKEND_MODEL" \
-     --arg backend "$BACKEND_TYPE" \
-     --arg url "$BACKEND_URL" \
-     --arg tasks "$TASKS" \
-     --arg batch "$BATCH_SIZE" \
-     --arg result "$RESULT_FILE" \
-     --argjson scores "$SCORES" \
-     '
-     .[$slug] = (.[$slug] // {}) |
-     .[$slug].evals = (.[$slug].evals // []) |
-     .[$slug].evals += [{
-       timestamp: $ts,
-       model: $model,
-       backend: $backend,
-       backend_url: $url,
-       tasks: $tasks,
-       batch_size: ($batch | tonumber),
-       result_file: $result,
-       scores: $scores
-     }]
-     ' "$EVALS_REG" > "$TMP" && mv "$TMP" "$EVALS_REG"
-
-  echo "✅ Results saved to $RESULT_FILE"
-  echo "✅ Registry updated at $EVALS_REG"
-else
+if [ -z "$RESULT_FILE" ]; then
   echo "✅ Benchmark complete — results saved to $OUT_DIR/"
   echo "⚠️  Could not detect result file for registry update"
+  exit 0
 fi
+
+# lm-eval 0.4.x keys metrics as "<metric>,<filter>" (acc,none, exact_match,strict-match).
+# Pick the primary metric per task and record its name alongside the value.
+# Subtasks of a group (mmlu_stem, ...) are dropped: the group's own score is the
+# number anyone quotes, and 57 subtask rows make the registry unreadable.
+SCORES=$(jq -c '
+  (.group_subtasks // {} | [.[]] | flatten | unique) as $subs
+  | .results // {}
+  | to_entries
+  | map(select(.key as $k | ($subs | index($k)) == null))
+  | map({
+      key: .key,
+      value: (
+        .value
+        | to_entries
+        | map(select(.key | test("_stderr$") | not))
+        | map(select(.key | test("^(acc_norm|acc|exact_match|f1|pass@1|mc2|bleu|chrf|rouge|word_perplexity|byte_perplexity|prompt_level_strict_acc|prompt_level_loose_acc|inst_level_strict_acc|inst_level_loose_acc)")))
+        | sort_by(.key | if startswith("acc_norm") then 0
+                         elif startswith("acc") then 1
+                         elif startswith("exact_match") then 2
+                         elif startswith("prompt_level_strict_acc") then 3
+                         else 4 end)
+        | if length > 0 then {metric: (.[0].key | split(",")[0]), value: .[0].value} else null end
+      )
+    })
+  | from_entries
+  | with_entries(select(.value != null))
+' "$RESULT_FILE" 2>/dev/null || echo '{}')
+
+LM_EVAL_VERSION=$(jq -r '.lm_eval_version // "unknown"' "$RESULT_FILE" 2>/dev/null || echo "unknown")
+SAMPLES=$(jq -c '.["n-samples"] // {}' "$RESULT_FILE" 2>/dev/null || echo '{}')
+
+TMP=$(mktemp)
+jq --arg slug "$SLUG" \
+   --arg ts "$TS" \
+   --arg model "$BACKEND_MODEL" \
+   --arg backend "$BACKEND_TYPE" \
+   --arg url "$BACKEND_URL" \
+   --arg tasks "$TASKS" \
+   --arg suite "$SUITE" \
+   --arg batch "$BATCH_SIZE" \
+   --arg limit "$LIMIT" \
+   --arg result "$RESULT_FILE" \
+   --arg version "$LM_EVAL_VERSION" \
+   --argjson scores "$SCORES" \
+   --argjson samples "$SAMPLES" \
+   '
+   .[$slug] = (.[$slug] // {}) |
+   .[$slug].evals = (.[$slug].evals // []) |
+   .[$slug].evals += [{
+     timestamp: $ts,
+     model: $model,
+     backend: $backend,
+     backend_url: $url,
+     tasks: $tasks,
+     suite: (if $suite == "" then null else $suite end),
+     batch_size: ($batch | tonumber),
+     limit: (if $limit == "" then null else ($limit | tonumber) end),
+     lm_eval_version: $version,
+     result_file: $result,
+     samples: $samples,
+     scores: $scores
+   }]
+   ' "$EVALS_REG" > "$TMP" && mv "$TMP" "$EVALS_REG"
+
+echo "✅ Results saved to $RESULT_FILE"
+echo "✅ Registry updated at $EVALS_REG"
+echo ""
+echo "Scores:"
+jq -r 'to_entries[] | "  \(.key): \(.value.value) (\(.value.metric))"' <<< "$SCORES"

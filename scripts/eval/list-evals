@@ -36,7 +36,8 @@ if [ -n "$MODEL_SLUG" ]; then
   # Show scores for the most recent eval
   echo ""
   echo "Latest scores:"
-  echo "$ENTRY" | jq -r '.evals[-1].scores | to_entries[] | "  \(.key): \(.value)"' 2>/dev/null
+  echo "$ENTRY" | jq -r '.evals[-1].scores | to_entries[] |
+    "  \(.key): \(if (.value | type) == "object" then "\(.value.value) (\(.value.metric))" else .value end)"' 2>/dev/null
 
 else
   # Show all evals

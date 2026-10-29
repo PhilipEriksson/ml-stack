@@ -94,6 +94,7 @@ Each toolchain pins conflicting dependencies, so they live in separate environme
 | File | Env name | Purpose |
 |---|---|---|
 | `envs/training.yml` | `training` | PyTorch cu130 + Unsloth + TRL + TensorBoard + Aim |
+| `envs/eval.yml` | `eval` | lm-eval-harness (benchmarks), isolated from training |
 | `envs/grpo-trl.yml` + `envs/grpo-trl.txt` | `grpo-trl` | TRL 0.23.1 + vLLM 0.11.0 + torch 2.8.0+cu128, for GRPO/RLVR |
 | (manual) | `quant-exl3` | exllamav3, pinned to torch 2.10.0+cu128 |
 | (manual) | `quant-nvfp4` | llm-compressor with its own transformers/compressed-tensors |
@@ -101,6 +102,9 @@ Each toolchain pins conflicting dependencies, so they live in separate environme
 ```bash
 conda env create -f envs/training.yml
 ml use-training-env training
+
+# Benchmarks
+conda env create -f envs/eval.yml
 
 # GRPO/RLVR
 conda env create -f envs/grpo-trl.yml

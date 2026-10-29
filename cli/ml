@@ -152,14 +152,16 @@ show_help() {
     eval)
       echo "ml eval"
       echo "  Runs lm-eval benchmarks against your active inference backend"
-      echo "  Usage: ml eval [tasks] [batch_size]"
-      echo "  Defaults: tasks=mmlu,gsm8k,hellaswag,arc_challenge, batch_size=4"
+      echo "  Usage: ml eval [--suite core|reasoning|reasoning-gated|all] [--limit n] [--batch n]"
+      echo "         ml eval <tasks> [batch_size]"
+      echo "         ml eval --prefetch        # download datasets only"
+      echo "         ml eval --list-suites     # show suites and their tasks"
+      echo "  Suites are defined in configs/eval-suites.json"
       echo "  Results are saved to outputs/evals/ and tracked in configs/evals/registry.json"
       echo ""
-      echo "  First: pip install 'lm-eval[multitask]'"
-      echo "  Then:  ml eval"
+      echo "  First: conda env create -f envs/eval.yml"
+      echo "  Then:  ml eval --suite core"
       echo "         ml eval mmlu,gsm8k"
-      echo "         ml eval mmlu,ifeval 8"
       ;;
 
     evals)

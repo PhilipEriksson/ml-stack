@@ -207,15 +207,22 @@ Details, environments, and verification: [quantization.md](quantization.md).
 Runs lm-eval against the active backend (vLLM container first, then the recorded llama.cpp model).
 
 ```bash
-ml eval                       # mmlu,gsm8k,hellaswag,arc_challenge @ batch 4
-ml eval mmlu,gsm8k
-ml eval mmlu,ifeval 8
+ml eval                          # core suite, batch 4
+ml eval --suite reasoning        # harder reasoning suite
+ml eval --suite all              # core + reasoning
+ml eval mmlu,gsm8k               # explicit tasks
+ml eval mmlu,gsm8k 8             # explicit tasks, batch 8
+ml eval --limit 5                # smoke test: 5 examples per task
+ml eval --prefetch               # download datasets, run nothing
+ml eval --list-suites            # show suites and their tasks
 ```
 
-Results land in `outputs/evals/` and are recorded in `configs/evals/registry.json`.
+Suites are defined in `configs/eval-suites.json`. Results land in `outputs/evals/` and are recorded in `configs/evals/registry.json` with per-task scores and metric names.
 
-### `ml evals [model-slug]`
+Override the detected backend to evaluate a remote endpoint:
 
-Lists recorded benchmarks, or the detail for one model.
+```bash
+ML_EVAL_BACKEND_URL=http://other-host:8080/v1 ML_EVAL_MODEL=my-model ml eval --suite core
+```
 
-See [evaluation.md](evaluation.md) for the task table and timings.
+See [evaluation.md](evaluation.md) for the task table, prefetch, and how to read the numbers.

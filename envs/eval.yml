@@ -1,0 +1,24 @@
+# Evaluation environment — lm-eval-harness, isolated from training.
+#
+# lm-eval pins its own datasets/transformers/scipy stack, which conflicts with
+# the training env's pins. Keeping it separate means installing a benchmark
+# never breaks a training run.
+#
+# Create:
+#   conda env create -f envs/eval.yml
+#
+# `ml eval` resolves the binary from this env automatically.
+
+name: eval
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - lm-eval[multitask,api,math]==0.4.13
+      # ifeval imports these at task-load time; not pulled by the extras
+      - langdetect
+      - immutabledict
+      # local-completions needs a tokenizer to compute token boundaries
+      - transformers

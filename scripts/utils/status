@@ -53,6 +53,13 @@ else
   echo "  llama bin  ❌ not built"
   WARNINGS+=("llama-server not built — see docs/install.md")
 fi
+
+if [ -x "$HOME/miniconda/envs/eval/bin/lm-eval" ]; then
+  echo "  eval       ✅ lm-eval installed"
+else
+  echo "  eval       ❌ lm-eval missing"
+  WARNINGS+=("eval env missing — conda env create -f envs/eval.yml")
+fi
 echo ""
 
 # =========================

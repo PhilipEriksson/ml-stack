@@ -101,7 +101,7 @@ docker compose -f services/docker/docker-compose.yml up -d api-webui
 | `ml serve-model <family> <variant>` | Serve a registered GGUF via llama.cpp |
 | `ml set-vllm-env [file]` | Select the vLLM env file (copied to `configs/vllm/active.env`) |
 | `ml quantize <model> --format gguf\|exl3\|nvfp4\|all` | Quantize an HF repo id or local directory |
-| `ml eval [tasks] [batch]` / `ml evals` | Run / list lm-eval benchmarks |
+| `ml eval [tasks] [batch]` / `ml evals` | Run / list lm-eval benchmarks (`--suite core\|reasoning\|all`) |
 
 Full reference with flags and examples: **[docs/cli.md](docs/cli.md)**.
 

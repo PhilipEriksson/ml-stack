@@ -1,0 +1,56 @@
+{
+  "_comment": "Task suites for `ml eval --suite <name>`. Task names are lm-eval 0.4.x names; verify with `lm-eval ls tasks` after upgrading the harness.",
+  "core": {
+    "description": "The standard set papers report. Cheap, fast, comparable across models.",
+    "tasks": [
+      "mmlu",
+      "gsm8k",
+      "hellaswag",
+      "arc_challenge",
+      "arc_easy",
+      "winogrande",
+      "truthfulqa_mc2",
+      "ifeval",
+      "piqa",
+      "boolq",
+      "openbookqa",
+      "lambada_openai"
+    ]
+  },
+  "reasoning": {
+    "description": "Harder reasoning, where models actually separate. Slower and noisier.",
+    "tasks": [
+      "mmlu_pro",
+      "bbh",
+      "minerva_math",
+      "aime"
+    ]
+  },
+  "reasoning-gated": {
+    "description": "GPQA Diamond. The dataset is gated on the Hub: accept the terms at huggingface.co/datasets/Idavidrein/gpqa and run `hf auth login` first.",
+    "tasks": [
+      "gpqa_diamond_zeroshot"
+    ]
+  },
+  "all": {
+    "description": "core + reasoning (open datasets only).",
+    "tasks": [
+      "mmlu",
+      "gsm8k",
+      "hellaswag",
+      "arc_challenge",
+      "arc_easy",
+      "winogrande",
+      "truthfulqa_mc2",
+      "ifeval",
+      "piqa",
+      "boolq",
+      "openbookqa",
+      "lambada_openai",
+      "mmlu_pro",
+      "bbh",
+      "minerva_math",
+      "aime"
+    ]
+  }
+}
