@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verifier-as-reward for the grpo-0.6b project (RLVR).
+"""Verifier-as-reward for a verifier-reward (RLVR) pipeline.
 
 The verifier is the reward model. Two components:
   1. Format reward: did the model follow the required output contract?

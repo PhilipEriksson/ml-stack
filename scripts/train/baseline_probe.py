@@ -8,7 +8,7 @@ Run this BEFORE any training (skill rule #1: verifier before anything):
 
 Usage:
   ~/miniconda/envs/grpo-trl/bin/python baseline_probe.py \
-      --model Qwen/Qwen3-0.6B --n 200
+      --model <hf-repo-id-or-local-path> --n 200
 """
 
 import argparse
@@ -21,7 +21,7 @@ from verifier import ANSWER_RE, accuracy_reward
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--model", default="Qwen/Qwen3-0.6B")
+    p.add_argument("--model", required=True, help="HF repo id or local path")
     p.add_argument("--n", type=int, default=200)
     p.add_argument("--split", default="test")
     p.add_argument("--seed", type=int, default=13)

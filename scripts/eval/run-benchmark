@@ -38,16 +38,13 @@ if [ -n "$DOCKER_CMD" ]; then
   fi
 fi
 
-# --- 2. Fallback: .active-vllm file ---
-if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/vllm/.active-vllm" ]; then
-  ACTIVE_ENV=$(cat "$ROOT/configs/vllm/.active-vllm")
-  if [ -f "$ROOT/configs/vllm/$ACTIVE_ENV" ]; then
-    ACTIVE_MODEL=$(grep '^MODEL_NAME=' "$ROOT/configs/vllm/$ACTIVE_ENV" | sed 's/^MODEL_NAME=//')
-    if [ -n "$ACTIVE_MODEL" ]; then
-      BACKEND_MODEL="$ACTIVE_MODEL"
-      BACKEND_URL="http://localhost:8080/v1"
-      BACKEND_TYPE="vllm"
-    fi
+# --- 2. Fallback: configs/vllm/active.env ---
+if [ -z "$BACKEND_MODEL" ] && [ -f "$ROOT/configs/vllm/active.env" ]; then
+  ACTIVE_MODEL=$(grep '^MODEL_NAME=' "$ROOT/configs/vllm/active.env" | sed 's/^MODEL_NAME=//')
+  if [ -n "$ACTIVE_MODEL" ]; then
+    BACKEND_MODEL="$ACTIVE_MODEL"
+    BACKEND_URL="http://localhost:8080/v1"
+    BACKEND_TYPE="vllm"
   fi
 fi
 

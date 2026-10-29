@@ -1,10 +1,14 @@
 # ML Stack — Modular inference stack
 #   vllm      — vLLM model serving (GPU, port 8080)
 #   api-webui — FastAPI proxy + Open WebUI (ports 8000, 3000)
+#   searxng   — SearXNG metasearch (port 8888)
 #
 # Build:  docker compose -f services/docker/docker-compose.yml build
 # Run:    docker compose -f services/docker/docker-compose.yml up -d
-# vLLM config is in configs/vllm/*.env — swap by changing the env_file reference
+#
+# The vLLM service reads configs/vllm/active.env. Select a config with
+# `ml set-vllm-env <file>` (it copies the file to active.env); start from
+# configs/vllm/example.env.
 
 services:
   vllm:
@@ -14,7 +18,7 @@ services:
     container_name: vllm-server
     runtime: nvidia
     env_file:
-      - ../../configs/vllm/qwen3.6-27b-int4.env
+      - ../../configs/vllm/active.env
     environment:
       - HF_HUB_CACHE=/hf-cache/hub
     volumes:
@@ -58,7 +62,7 @@ services:
       - "8000:8000"
       - "3000:8080"
     environment:
-      - LLM_SERVERS=http://172.17.0.1:30000
+      - LLM_SERVERS=${LLM_SERVERS:-http://vllm-server:8000}
       - OPENAI_API_BASE_URL=http://localhost:8000/v1
       - OPENAI_API_KEY=sk-dummy
       - ENABLE_OLLAMA_API=False

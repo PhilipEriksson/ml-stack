@@ -1,1282 +1,159 @@
 # ML Stack
 
-A local machine learning stack for model inference, fine-tuning, and evaluation.
+A local machine learning stack for model inference, fine-tuning, quantization, and evaluation — one GPU, one repo, no cloud.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/Platform-Linux_%26_WSL2-success?style=flat-square)]() [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)]() [![Docker](https://img.shields.io/badge/Docker-Required-blue?style=flat-square&logo=docker)]() [![GPU](https://img.shields.io/badge/GPU-RTX_5090-orange?style=flat-square)](https://www.nvidia.com/en-us/hardware/geforce/rtx-5090/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE) [![Platform](https://img.shields.io/badge/Platform-Linux_%26_WSL2-success?style=flat-square)]() [![Python](https://img.shields.io/badge/Python-3.12-blue?style=flat-square&logo=python)]() [![Docker](https://img.shields.io/badge/Docker-Required-blue?style=flat-square&logo=docker)]() [![CUDA](https://img.shields.io/badge/CUDA-%E2%89%A5%2013-76B900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)
 
-[![vLLM](https://img.shields.io/badge/vLLM-v0.20.1-8B18A4?style=flat-square)](https://docs.vllm.ai) [![Open%20WebUI](https://img.shields.io/badge/Open_WebUI-main-green?style=flat-square)](https://openwebui.com) [![FastAPI](https://img.shields.io/badge/FastAPI-0.112.0-009688?style=flat-square)](https://fastapi.tiangolo.com) [![CUDA](https://img.shields.io/badge/CUDA-≥%2013-76B900?style=flat-square)](https://developer.nvidia.com/cuda-toolkit)
-
-**Model inference • Fine-tuning • Evaluation — all local, all modular**
-
-> **Hardware target:** Optimized for **NVIDIA RTX 5090** (32 GB VRAM) with **CUDA ≥ 13**.
-
-> **Training environment:** The `training` env uses **PyTorch 2.4.0 + CUDA 12.1**. A separate
-> `training-cuda13` env (**PyTorch cu130 + CUDA 13.0**) is available for optimal Flash Attention 2
-> performance on the RTX 5090. It uses a community-built `flash-attn` 2.8.3 cu130 wheel
-> ([source](https://github.com/Dao-AILab/flash-attention/issues/2442)). Switch between environments
-> with `ml use-training-env`. See [Conda Environments](#conda-environments) for setup.
-
-[⚙️ Requirements](#requirements) • [🚀 Quick Start](#quick-start) • [🛠️ CLI Commands](#cli-commands) • [📚 Model Storage](#model-storage-structure) • [🐳 Docker Services](#docker-services) • [🔍 Web Search](#web-search) • [📖 Training](#training) • [🐍 Conda Environments](#conda-environments) • [🤖 Claude Code](#using-with-claude-code) • [📊 Evaluation](#evaluation) • [⚡ GPU Optimization](#gpu-optimization) • [Runtimes](#runtimes)
+**Inference • Fine-tuning • Quantization • Evaluation — all local, all modular**
 
 ---
 
-## ⚙️ Requirements
+## What this is
 
-**Hardware**
+Four independent layers, each with one job, wired together by a single `ml` command:
+
+| Layer | Tool | Where |
+|---|---|---|
+| **Inference** | vLLM (Docker) for HF checkpoints, llama.cpp for GGUF | `services/`, `scripts/utils/serve-model` |
+| **Training** | Unsloth (LoRA/QLoRA/full FT) and TRL (SFT, GRPO/RLVR) | `scripts/train/`, `envs/` |
+| **Quantization** | GGUF, EXL3, NVFP4 | `scripts/quantize/` |
+| **Evaluation** | lm-eval-harness against the live backend | `scripts/eval/` |
+
+Everything is **model-agnostic**. Commands take a model reference (`<family>/<variant>` from the registry, or an HF repo id) and resolve paths, formats, and interpreters themselves. Nothing in the code is tied to a particular checkpoint.
+
+Three conventions make that work:
+
+- **Registries are the source of truth.** `configs/models/registry.json`, `configs/datasets/registry.json`, `configs/runs/registry.json` map names to paths, hashes, and status. They are local state and gitignored.
+- **One environment per toolchain.** Training, EXL3 quantization, and NVFP4 quantization pin conflicting dependency sets, so each runs in its own conda env and the dispatcher shells out instead of importing across them.
+- **Artifacts live under `models/` and `outputs/`.** Downloads, quantized builds, adapters, and run logs all land in a predictable layout, so serving and evaluation find them without configuration.
+
+## Requirements
 
 | Component | Requirement | Notes |
 |---|---|---|
-| GPU | 1× NVIDIA RTX 5090 (32 GB VRAM) | Blackwell GB202; lower-end GPUs may not fit 27B int4 models |
-| CPU | 8+ cores | For dataset processing and llama.cpp multi-threading |
-| RAM | 32 GB | Shared between system, inference and training; running both simultaneously will be tight |
-| Storage | ~50 GB free | Model weights, datasets, conda envs, Docker images |
+| GPU | 1× NVIDIA GPU, 24 GB+ VRAM | Blackwell (sm_120) recommended; larger models need more VRAM or quantization |
+| CPU | 8+ cores | Dataset processing, llama.cpp threads |
+| RAM | 32 GB+ | Shared between system, inference, and training |
+| Storage | 50 GB+ free | Weights, datasets, conda envs, Docker images |
+| OS | Linux or WSL2 | Ubuntu 22.04+ recommended |
+| NVIDIA driver | ≥ 580.x | Required for the CUDA 13 runtime in the vLLM image |
+| CUDA toolkit | ≥ 13 | Backward-compatible with older PyTorch CUDA wheels |
+| Docker | Latest stable | With the NVIDIA Container Toolkit for GPU passthrough |
+| Conda | Miniconda | Training and quantization environments |
+| Python | 3.12 | Training env; the CLI itself is bash + `jq` |
 
-**Software**
+Optional: `huggingface_hub` (`hf` CLI) for downloads, `lm-eval[multitask]` for benchmarks.
 
-| Component | Version | Notes |
-|---|---|---|
-| OS | Linux / WSL2 | Ubuntu 22.04+ recommended |
-| NVIDIA Driver | ≥ 580.x | Required for CUDA 13 runtime in the vLLM Docker image |
-| CUDA Toolkit | ≥ 13 | System CUDA ≥ 13 is backward-compatible with PyTorch CUDA 12.1 wheels |
-| Docker | Latest stable | With NVIDIA Container Toolkit installed for GPU passthrough |
-| Git | ≥ 2.x | For cloning and model management |
-| Conda (Miniconda) | Latest | For `training` and `inference-vllm` environments |
-| Python | 3.10+ | 3.10 for stable envs, 3.12 for experimental training env |
+Full setup, driver notes, and Docker configuration: **[docs/install.md](docs/install.md)**.
 
-**Optional**
-
-| Component | Purpose |
-|---|---|
-| `huggingface_hub` (hf CLI) | Model/dataset downloads (`pip install huggingface_hub`) |
-| `lm-eval` | Benchmarking (`pip install 'lm-eval[multitask]'`) |
-
-### NVIDIA Drivers
-
-**Windows / WSL2 — NVIDIA App (Recommended)**
-
-Install the **[NVIDIA App](https://www.nvidia.com/en-us/drivers/nvidia-app/)** (or the legacy GeForce driver installer) — both provide the correct driver with CUDA support. On WSL2, the driver is shared with the Windows host, so no additional setup is needed inside WSL2.
-
-**Linux (Ubuntu) — Open Kernel Module**
-
-On Ubuntu 24.04+ with RTX 50-series (Blackwell), the open kernel module (`nvidia-driver-open`) is required for driver stability. The proprietary/proprietary-open drivers may fail to detect the GPU.
+## Quick start
 
 ```bash
-# Ensure Secure Boot is disabled (required for open driver on fresh installs)
-# Check current driver status
-ubuntu-drivers devices
-
-# Install the open driver
-sudo apt install nvidia-driver-open
-
-# After reboot, verify
-nvidia-smi
-```
-
-For CUDA, install the toolkit from your distro's repos (e.g. `cuda-toolkit-13` for CUDA 13.x) and add to your `~/.bashrc`:
-```bash
-export PATH="/usr/local/cuda-13.3/bin:$PATH"
-export LD_LIBRARY_PATH="/usr/local/cuda-13.3/lib64:${LD_LIBRARY_PATH}"
-```
-
-**Troubleshooting:** If `nvidia-smi` shows no GPU or returns "No devices found," switch to `nvidia-driver-open` (see above). On systems without an iGPU, you cannot enroll MOK keys at boot (no display), so either disable Secure Boot or use the open driver which doesn't require key enrollment.
-
----
-
-## 🚀 Quick Start
-
-**1. Clone the repository:**
-```bash
+# 1. Clone
 git clone https://github.com/PhilipEriksson/ml-stack.git
 cd ml-stack
-```
 
-**2. Run the setup check:**
-```bash
+# 2. Check the system (add --install to auto-fix what it can)
 bash scripts/init.sh
-```
-This checks your system (Python, pip, jq, curl, GPU, Docker, conda, huggingface_hub, llama.cpp, Docker images) and reports what's missing.
 
-**3. Auto-install what it can:**
-```bash
-bash scripts/init.sh --install
-```
-This will:
-- Add `ml` to your PATH (in `~/.bashrc`)
-- Install missing system tools (`jq`)
-- Install Python packages (`huggingface_hub`)
-- Create Docker wrapper on WSL2 (if Docker Desktop is installed but not in PATH)
-- Create missing conda environments
-- Build missing Docker images (`vllm`, `api-webui`)
-- Create missing project directories
-
-> **Note:** Docker Desktop itself must be installed manually ([download](https://docs.docker.com/desktop/)).
-
-**4. Source your shell:**
-```bash
+# 3. Put the CLI on PATH
 source ~/.bashrc
-ml          # shows all available commands
-ml help add-model
-```
+ml
 
-**5. Launch vLLM inference:**
-```bash
+# 4. Register a model
+ml add-model auto <org>/<model>            # HF repo id; auto-detects type/format
+ml add-model auto <org>/<model> --type base
+
+# 5. Serve it
+cp configs/vllm/example.env configs/vllm/my-model.env   # set MODEL_NAME
+ml set-vllm-env my-model.env
 docker compose -f services/docker/docker-compose.yml up -d vllm
-```
-The first launch will download the model weights (~20 GB for a 27B int4 model). Wait for "Application startup complete" in the logs.
 
-> **Performance:** Qwen3.6-27B int4 AutoRound with MTP speculative decoding delivers 100+ tokens/sec on a single RTX 5090 (32 GB) with 256K context.
-
-**6. Verify it's working:**
-```bash
-curl http://localhost:8080/v1/models | jq
+# 6. Verify
+curl -s http://localhost:8080/v1/models | jq
 ```
 
-**7. Optional — start the web interface:**
+Optional web interface (Open WebUI + search proxy):
+
 ```bash
 docker compose -f services/docker/docker-compose.yml up -d api-webui
+# http://localhost:3000
 ```
-Open `http://localhost:3000` for the Open WebUI.
 
-## 📁 Project Structure
+## CLI
+
+`ml` is the only entry point. `ml help <command>` prints per-command usage.
+
+| Command | Purpose |
+|---|---|
+| `ml add-model auto <hf-repo>` | Download + register a model (auto-detects type, quant format, bit-width) |
+| `ml add-model <family> <variant> <source>` | Download + register with explicit names |
+| `ml add-dataset <family> <hf-dataset>` | Download + register a dataset |
+| `ml process-dataset <family> <dataset>` | Convert to alpaca format (`instruction`, `input`, `output`) |
+| `ml sample-dataset <family> <dataset> <n>` | Build a smaller processed dataset for smoke tests |
+| `ml create-training-run <run> <family/model> <family/dataset>` | Write a run config (`--method lora\|qlora\|fullft`) |
+| `ml execute-training-run <run>` | Run it in the active training env |
+| `ml use-training-env [env]` | Switch the active training conda env |
+| `ml kill-training` | Stop running training processes |
+| `ml tensorboard` / `ml aim-ui` | Loss curves (6006) / cross-run comparison (43801) |
+| `ml runs` / `ml compare-runs <a> <b>` | List / diff training runs |
+| `ml serve-model <family> <variant>` | Serve a registered GGUF via llama.cpp |
+| `ml set-vllm-env [file]` | Select the vLLM env file (copied to `configs/vllm/active.env`) |
+| `ml quantize <model> --format gguf\|exl3\|nvfp4\|all` | Quantize an HF repo id or local directory |
+| `ml eval [tasks] [batch]` / `ml evals` | Run / list lm-eval benchmarks |
+
+Full reference with flags and examples: **[docs/cli.md](docs/cli.md)**.
+
+## Repository layout
 
 ```
 .
-├── cli/                ← CLI entry point (the `ml` command)
-│   └── ml
-├── configs/            ← JSON registries and configuration files
-│   ├── datasets/       ← dataset registry
-│   ├── dflash/         ← dflash_server environment config (server.env)
-│   ├── evals/          ← benchmark eval registry (created on first `ml eval`)
-│   ├── llama/          ← active llama.cpp model state (created by `serve-model`)
-│   ├── models/         ← model registry (used by `serve-model`)
-│   ├── runs/           ← training run registry
-│   ├── searxng/        ← SearXNG search configuration
-│   └── vllm/           ← vLLM environment config files (.env)
-├── datasets/           ← downloaded datasets (raw/ + processed/)
-├── engine/             ← script orchestration
-│   └── runner.sh       ← dispatches commands to scripts/
-├── envs/               ← conda environment YAML files
-│   ├── training.yml    ← PyTorch + Unsloth + PEFT + TRL + huggingface_hub
-│   └── inference-vllm.yml    ← vLLM inference (conda env: inference-vllm)
-├── models/             ← local model storage
-│   ├── base/           ← full-precision, unmodified weights
-│   ├── quantized/      ← compressed model variants (GGUF, GPTQ, AWQ, etc)
-│   └── finetuned/      ← LoRA adapters and merged fine-tuned models
-├── outputs/            ← experiment outputs and training artifacts
-├── runtimes/           ← third-party runtime dependencies (e.g. llama.cpp)
-├── scripts/            ← entrypoints and orchestration
-│   ├── build.sh        ← alias for docker compose build
-│   ├── init.sh         ← one-time setup (adds `ml` to PATH)
-│   ├── train/          ← training scripts (finetune.py)
-│   ├── eval/           ← benchmark scripts (run-benchmark)
-│   └── utils/          ← utility scripts
-│       ├── add-model       ← download and register models from HF
-│       ├── add-dataset     ← download and register datasets from HF
-│       ├── compare-runs    ← compare two training runs
-│       ├── kill-training   ← find and kill running finetune.py processes
-│       ├── ml-runs         ← list all recorded training runs
-│       ├── process-dataset  ← convert raw datasets to alpaca format (instruction, input, output)
-│       ├── sample-dataset   ← create a smaller version of a processed dataset for quick tests
-│       ├── serve-model     ← serve a registered GGUF model via llama.cpp
-│       ├── set-vllm-env    ← set the active vLLM env file
-│       ├── use-training-env ← switch the active training conda environment
-│       ├── create-training-run  ← create and register a new training run
-│       └── execute-training-run ← run the training in the conda training env
-└── services/           ← Docker services
-    ├── api-webui/      ← FastAPI proxy + Open WebUI
-    ├── docker/         ← Docker Compose orchestration
-    │   └── docker-compose.yml
-    ├── searxng/        ← SearXNG search engine
-    └── vllm/           ← vLLM Docker service (env-driven config)
+├── cli/ml                  ← the `ml` command (help + dispatch)
+├── engine/runner.sh        ← maps commands to scripts/
+├── configs/                ← tracked templates + gitignored local state
+│   ├── models/             ← model registry (local)
+│   ├── datasets/           ← dataset registry (local)
+│   ├── runs/               ← training run registry (local)
+│   ├── evals/              ← benchmark registry (local, created on first eval)
+│   ├── llama/              ← active llama.cpp model (local)
+│   ├── vllm/               ← example.env + active.env (local)
+│   ├── training/           ← run config templates (*.example.json)
+│   └── searxng/            ← search settings
+├── datasets/               ← raw/ + processed/ (gitignored contents)
+├── docs/                   ← documentation
+├── envs/                   ← conda environment definitions
+├── models/                 ← base/ + quantized/ + finetuned/ (gitignored contents)
+├── notebooks/              ← teaching notebooks
+├── outputs/                ← runs/, evals/, quantize/, aim/ (gitignored contents)
+├── runtimes/               ← third-party runtimes (llama.cpp, exllamav3)
+├── scripts/
+│   ├── init.sh             ← one-time setup
+│   ├── build.sh            ← docker compose build wrapper
+│   ├── train/              ← finetune.py, sft.py, grpo.py, verifier.py, process.py
+│   ├── quantize/           ← dispatcher + per-format modules
+│   ├── eval/               ← run-benchmark, list-evals
+│   └── utils/              ← one script per `ml` command
+└── services/
+    ├── docker/             ← docker-compose.yml
+    ├── vllm/               ← vLLM image + env-driven entrypoint
+    ├── api-webui/          ← FastAPI proxy + Open WebUI
+    └── searxng/            ← SearXNG metasearch
 ```
 
-## 🛠️ CLI Commands
+## Documentation
 
-The `ml` command (in `cli/ml`) is the unified entry point for all operations. Add it to your PATH:
-
-```bash
-export PATH="$HOME/ml-stack/cli:$PATH"
-```
-
-### Model Management
-
-**Download and register a model from Hugging Face (auto-detect):**
-```bash
-ml add-model auto <hf-repo>
-```
-Auto-detects the family (`qwen`, `llama3`), quantization format, and bit-width. Places the model in the correct folder under `models/`.
-
-```bash
-# Examples:
-ml add-model auto Lorbus/Qwen3.6-27B-int4-AutoRound
-# → models/quantized/qwen/auto-round/4bit/...
-
-ml add-model auto bartowski/Llama-3.1-8B-Instruct-GGUF
-# → models/quantized/llama3/gguf/...
-```
-
-**Download with manual family + variant names:**
-```bash
-ml add-model <family> <variant> <hf-repo>
-```
-
-```bash
-# Examples:
-ml add-model qwen qwen3.6-27b Lorbus/Qwen3.6-27B-int4-AutoRound
-ml add-model qwen qwen3.5-32b HuggingFaceTB/SmolLM2-1.7B-Instruct --type base
-```
-
-**Override auto-detection type:**
-```bash
-ml add-model auto <hf-repo> --type <base|quantized|finetuned>
-```
-
-### Serving Models
-
-**Serve a GGUF model via llama.cpp (local):**
-```bash
-ml serve-model <family> <variant>
-```
-
-```bash
-# Example:
-ml serve-model qwen qwen3.6-27b-gguf
-```
-
-The script reads the registry entry, resolves the `.gguf` file path, and launches `llama-server` from `runtimes/llama.cpp/`.
-
-**VRAM safety:** Before launching, the script checks if the vLLM Docker container is running. If so, it warns you and offers to stop it — running both vLLM and llama.cpp simultaneously on a consumer GPU will likely exceed your VRAM.
-
-**For HF models (serve via Docker vLLM):**
-```bash
-docker compose -f services/docker/docker-compose.yml up -d vllm
-```
-This launches vLLM in Docker with the model from `configs/vllm/qwen3.6-27b-int4.env`. Swap models by changing the `.env` file and rebuilding.
-
-**Optional flags for `serve-model`:**
-```bash
---ctx <n>     Context length (auto-detected from GPU VRAM, default 16384)
---ngl <n>     Number of GPU layers (default 999 = all layers on GPU)
---port <n>    Port to serve on (default 8000)
---host <addr> Bind address (default 0.0.0.0)
---fa          Enable flash attention
-```
-
-If the registry entry has an `mmproj` field (vision projection), it is auto-loaded.
-
-### Dataset Management
-
-**Download a dataset from Hugging Face:**
-```bash
-ml add-dataset <family> <hf-dataset-repo>
-```
-```bash
-# Example:
-ml add-dataset qwen HuggingFaceTB/cnn_dailymail
-# → datasets/raw/qwen/cnn_dailymail/
-```
-
-**Convert to alpaca format for training:**
-```bash
-ml process-dataset <family> <dataset-name>
-```
-Auto-detects column mapping from common dataset patterns. Override with `--instruction`, `--input`, `--output` flags. Outputs alpaca-format dataset (`instruction`, `input`, `output`) to `datasets/processed/` with `train/` and `eval/` splits.
-
-```bash
-# Examples:
-ml process-dataset qwen cnn_dailymail
-#   auto-detects: instruction=(none), input=article, output=highlights
-
-ml process-dataset qwen my_alpaca --instruction prompt --output response
-```
-
-### Training
-
-Uses Unsloth's `FastLanguageModel` for efficient 4-bit LoRA fine-tuning with `SFTTrainer`. The dataset is converted from alpaca format into chat messages and formatted with the model's native chat template.
-
-#### LoRA vs QLoRA vs Full Fine-Tuning
-
-Two independent choices that get confused: **what parameters you train** (all weights vs adapters) and **what stage you run** (SFT, DPO/GRPO, continued pretraining). SFT is a *stage*, full FT is a *parameterization* — any stage can run either way.
-
-| Method | What trains | Base weights | VRAM (0.6B, RTX 5090) | Use when |
-|---|---|---|---|---|
-| **LoRA** | Adapter A/B matrices only | bf16 | ~5 GB | Behavior shaping when memory allows — fastest per step |
-| **QLoRA** | Adapter A/B matrices only | 4-bit NF4 | ~3 GB | Same as LoRA, but the model doesn't fit in 16-bit; slower steps (on-the-fly dequant) |
-| **Full FT** | All weights | bf16 | ~10–12 GB | Knowledge injection (continued pretraining), or as the reference point |
-
-**Concepts:**
-
-- **PEFT** = *Parameter-Efficient Fine-Tuning*: the umbrella term for adapter methods (LoRA, DoRA, IA³, prefix tuning) — and the name of HuggingFace's library (`pip install peft`) implementing them. LoRA is the dominant one.
-- **LoRA**: for each target weight matrix `W`, train two small matrices `A` (d×r) and `B` (r×k); the effective update is `W + (α/r)·A·B` with rank ≤ r. Only A/B are saved (megabytes), and they can be merged into the base weights afterwards.
-- **QLoRA**: same adapters, but the frozen base is quantized to 4-bit **NF4** and dequantized on the fly. NF4's 16 levels are *quantiles of a normal distribution* — each bucket gets equal expected mass for Gaussian-like weights — unlike INT4's equally-spaced grid, or FP4 (NVFP4/MXFP4) which uses a float-style ladder (dense near zero, coarse at high magnitude). This distribution-matching is why NF4 wins at 4-bit.
-- **When LoRA matches full FT**: for post-training on capability the model already has (instruction following, style, format) — provided adapters target **all** linear layers (`q/k/v/o/gate/up/down`) and the learning rate is ~10× the full-FT value. Full FT still wins for: continued pretraining on large corpora (low-rank updates are a capacity bottleneck for new *knowledge*), very large batch sizes, and repeated sequential fine-tuning (LoRA accumulates "intruder dimensions").
-- **Continued pretraining** (teaching the model new knowledge at scale): full FT, plain next-token loss on packed raw text (no chat template), LR ~1e-5–2e-5, mixing ~5–10% general data to limit catastrophic forgetting.
-
-**In this repo:**
-
-- `finetune.py` (Unsloth) supports all three methods via the run config's `method` field:
-```bash
-# QLoRA (default): 4-bit NF4 base + r=16 adapters on all 7 linear modules
-ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned
-
-# LoRA: bf16 base + adapters (faster steps, needs the model in 16-bit)
-ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned --method lora
-
-# Full FT: all weights in bf16, LR auto-drops to 2e-5
-ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned --method fullft
-```
-- `scripts/train/sft.py` (TRL) is a standalone full-FT SFT (bf16, no adapters) used by the grpo-0.6b pipeline.
-- Switching is one change: pass a `peft_config` (LoRA/QLoRA) or omit it (full FT). Everything else — dataset, chat template, trainer, eval — stays identical.
-
-**Adapter knobs (LoRA/QLoRA only)** — optional keys in the run config (`outputs/runs/<name>/config.json`); omit them and you get the defaults shown, which are the original hardcoded adapter:
-
-| key | default | meaning |
-|---|---|---|
-| `lora_r` | `16` | adapter rank — capacity of the update |
-| `lora_alpha` | `lora_r` | scaling; effective strength is `alpha/r` (default keeps 1.0) |
-| `lora_dropout` | `0.0` | dropout on adapter inputs |
-| `lora_target_modules` | `q,k,v,o,gate,up,down` | which linear layers get adapters |
-| `lora_rslora` | `false` | rank-stabilized LoRA (scales by `alpha/sqrt(r)`) |
-| `lora_bias` | `none` | `none` / `all` / `lora_only` |
-
-```json
-{ "method": "lora", "lora_r": 32, "lora_alpha": 64, "lora_dropout": 0.05 }
-```
-Or set them at creation time:
-```bash
-scripts/utils/create-training-run my-run qwen/qwen3-0.6b qwen/gsm8k \
-  --method lora --lora-r 32 --lora-alpha 64 --lora-dropout 0.05
-```
-The resolved values are written back into the run's `config.json` and logged to Aim as hparams, so every run records the rank it actually used. Rank is never auto-selected — it is whatever the config says (default 16).
-
-**Full workflow — download, process, train:**
-```bash
-# 1. Download raw dataset
-ml add-dataset qwen yahma/alpaca-cleaned
-
-# 2. Convert to alpaca format (instruction, input, output)
-ml process-dataset qwen alpaca-cleaned
-
-# 3. Download a base model for fine-tuning
-ml add-model auto Qwen/Qwen3-0.6B --type base
-
-# 4. Create a training run
-ml create-training-run my-run qwen/qwen3-0.6b qwen/alpaca-cleaned
-
-# 5. Optionally switch training environment (default: training)
-ml use-training-env                     # show current env + available options
-ml use-training-env training-cuda13     # switch to CUDA 13 env (Flash Attention 2)
-ml use-training-env training            # switch back to stable env
-
-# 6. Execute the training run
-ml execute-training-run my-run
-
-# 7. Kill a running training job
-ml kill-training
-```
-
-#### GRPO / RLVR post-training (grpo-0.6b, Oct 2026)
-
-Verifier-reward post-training pipeline: SFT cold-start → GRPO with a programmatic
-checker (math_verify) as the reward, TRL + vLLM in colocate mode on a single 5090.
-See **[scripts/train/README.md](scripts/train/README.md)** for the full pipeline,
-operating rules (verifier-first, 10-30% pass-rate gate, stop :30000 before stage 2)
-and results. Env: `grpo-trl`.
-
-```bash
-# 0. Gate check: base-model pass rate must land in 10-30%
-~/miniconda/envs/grpo-trl/bin/python scripts/train/baseline_probe.py --model Qwen/Qwen3-0.6B
-
-# 1. SFT cold-start (only if probe says so)
-~/miniconda/envs/grpo-trl/bin/python scripts/train/sft.py --train <train.jsonl> --eval <eval.jsonl>
-
-# 2. GRPO/RLVR (stop the :30000 server first — colocate vLLM needs the VRAM)
-~/miniconda/envs/grpo-trl/bin/python scripts/train/grpo.py \
-    --train <train.jsonl> --model outputs/runs/grpo-0.6b-sft/final
-```
-
-#### Training Dashboards (TensorBoard + Aim)
-
-Every `finetune.py` run logs metrics to two local dashboards — no accounts, no upload:
-
-- **TensorBoard** — train/eval loss, LR, grad norm per run step. Launch with:
-  ```bash
-  ml tensorboard   # → http://localhost:6006
-  ```
-  Event files live in each run's `outputs/runs/<name>/logs/`.
-- **Aim** — cross-run comparison UI: eval loss across all runs colored by method/LR, param tables, run diffing. Launch with:
-  ```bash
-  ml aim-ui        # → http://localhost:43801
-  ```
-  All runs land in the shared repo `outputs/aim/`, grouped by experiment (`qlora`/`lora`/`fullft`), with method + model + dataset stored as params.
-
-Both serve on 0.0.0.0, so they're reachable over Tailscale from other machines (use the box's Tailscale hostname, not `localhost`).
-
-#### Quick Test Run
-
-For testing the pipeline before committing to a full training run, sample a small subset of the dataset. Datasets under 10K examples automatically trigger **fast settings** (1 epoch, batch=8, sparse logging) — reducing training from ~40 min to ~30 seconds.
-
-```bash
-# Create a 1000-example version of the processed dataset
-ml sample-dataset qwen alpaca-cleaned 1000
-
-# Use it for a fast test run
-ml create-training-run my-test qwen/qwen3-0.6b qwen/alpaca-cleaned-1000
-ml execute-training-run my-test
-```
-
-Sample sizes for different use cases:
-| Samples | Train/eval split | Est. time (0.6B, RTX 5090) | Use case |
-|---|---|---|---|
-| 1,000 | 1,000 / 50 | ~30 sec | Pipeline smoke test |
-| 5,000 | 5,000 / 250 | ~2 min | Quick sanity check |
-| 10,000 | 10,000 / 500 | ~4 min | Preliminary results |
-| 51,760 (full) | 49,172 / 2,588 | ~40 min | Production run |
-
-**Force fast settings on a full dataset:**
-```bash
-ml execute-training-run my-run --sample
-```
-
-**Recommended for Qwen3-0.6B:** Start with a 1,000 or 5,000 sample to verify the pipeline, then run the full dataset with `ml execute-training-run my-run` (4 epochs, batch=2) once satisfied.
-
-#### Training runs
-
-Actual runs, with what was measured rather than what was hoped for.
-
-**`qwopus-0.8b` — Qwen3.5-0.8B, Opus reasoning distillation (2026-10-28)**
-
-Reproducing the pipeline behind the larger "Opus-distilled" Qwen releases at a size that
-trains in under half an hour on one consumer GPU.
-
-| | |
+| Doc | Contents |
 |---|---|
-| Base | `Qwen/Qwen3.5-0.8B` (604M non-embedding, hybrid linear attention) |
-| Method | LoRA SFT, response-only loss |
-| Data | 3 datasets → 3,191 rows normalized → **2,917** after length filter |
-| LoRA | `r=64`, `alpha=64`, dropout 0, 43.29M trainable (4.83%) |
-| SFT | 4-bit base, `max_length=16384`, batch 8 × GA 4, 2 epochs, lr 2e-4 |
-| Result | 184 steps, **25.1 min**, loss 0.8153 → 0.6618 (plateau), best step 0.4458 |
-| Tracking | Aim experiment `qwopus-0.8b` |
-
-Three things this run established that a naive copy of the reference notebook gets wrong:
-
-1. **LoRA target modules.** Qwen3.5 uses hybrid attention — only 6 of 24 layers are full
-   attention (`q/k/v/o_proj`); the other 18 are linear attention (`in_proj_qkv`,
-   `in_proj_z`, `in_proj_b`, `in_proj_a`, `out_proj`). Targeting only the conventional
-   projection names leaves most of the attention stack frozen.
-2. **` thinking` and `</think>` are special tokens** (ids 248068/248069), not literal
-   strings. A masking marker written as `" think"` matches nothing and masks every label.
-3. **`enable_thinking=True` is required at inference.** The chat template defaults it off,
-   rendering an empty think block, and the model then answers with no reasoning at all.
-
-The loss plateaued at ~0.66 rather than the ~0.24 reported for the 4B version of this
-recipe. That gap is model capacity and data volume, not a training bug — 604M parameters
-over 2,917 samples for 2 epochs.
-
-The run is published as
-[Qwen3.5-0.8B-Opus-Reasoning-Distilled](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled)
-with a LoRA adapter and three quantizations — see
-[Publishing to the Hub](#publishing-to-the-hub).
-
-### Run Tracking
-
-**List all training runs:**
-```bash
-ml runs
-```
-
-**Compare two runs:**
-```bash
-ml compare-runs <run1> <run2>
-```
-Shows model version, dataset, and model hash for each run. Warns if both use identical weights.
-
-### Quantization
-
-Turn a trained (or downloaded) model into a distributable compressed format. Three
-formats, one command, reusable across models.
-
-```bash
-ml quantize <model> --format gguf  --quants Q4_K_M,Q8_0
-ml quantize <model> --format exl3  --bpw 4.0,3.0
-ml quantize <model> --format nvfp4 --calib <dataset-or-jsonl> --samples 256
-ml quantize <model> --format all   --dry-run
-```
-
-`<model>` is an HF repo id **or** a local directory — quantizing a model you just trained
-is the same code path as quantizing something off the Hub.
-
-#### The three formats
-
-| Format | What it is | Runtime | Needs calibration |
-|---|---|---|---|
-| **GGUF** | Block-wise integer quantization (Q4_K_M, Q8_0…) | llama.cpp, Ollama, LM Studio | no |
-| **EXL3** | QTIP trellis-coded quantization, 2–8 bpw | exllamav3, TabbyAPI | no (Hessians on the fly) |
-| **NVFP4** | NVIDIA 4-bit float, W4A4, two-level micro-block scaling | vLLM (Blackwell) | **yes** |
-
-#### Why three environments
-
-Each format needs a different toolchain, and they conflict:
-
-| Format | Tool | Interpreter | Why separate |
-|---|---|---|---|
-| GGUF | Unsloth's bundled llama.cpp converter | `training-cuda13` | Unsloth lives there |
-| EXL3 | exllamav3 | `quant-exl3` | Wheels pinned to `torch 2.10.0+cu128`; training env is `2.14.1+cu130` |
-| NVFP4 | llm-compressor | `quant-nvfp4` | Pins its own `transformers`/`compressed-tensors` |
-
-`scripts/quantize/quantize.py` is stdlib + `huggingface_hub` only. It resolves the model and
-architecture, then shells out to the right interpreter per format — so the dispatcher runs
-anywhere and the format modules never see each other's dependencies.
-
-**Creating a quant and serving it are different toolchains.** NVFP4 *creation* is
-llm-compressor and runs on any CUDA GPU; FP4 tensor cores only matter for *running* W4A4
-inference. Serving is vLLM with SM120 kernels compiled in — a separate problem.
-
-#### Output layout
-
-```
-models/quantized/<family>/<format>/<bits>/<slug>/
-```
-
-Matches the existing convention, so `ml add-model` and the serving commands find results
-without changes. Working directories go to `outputs/quantize/<slug>/`.
-
-#### Architecture gating
-
-Every run reads `config.json` → `architectures[0]` and checks it against the target tool's
-support table. An unsupported architecture fails loudly with the supported list rather than
-producing a silently broken artifact. NVFP4 ignore lists are per-architecture in
-`scripts/quantize/configs/nvfp4-ignore.yaml`; an unknown architecture falls back to
-`lm_head` only with a printed warning.
-
-#### Verification
-
-```bash
-python scripts/quantize/verify.py \
-  --artifact hf:bf16:/path/to/merged_16bit \
-  --artifact gguf:Q4_K_M:/path/to/model-Q4_K_M.gguf \
-  --artifact exl3:4.0bpw:/path/to/exl3-dir \
-  --out report.json
-```
-
-Runs a fixed prompt set through each artifact and records output length, whether the
-reasoning block survived, and whether an expected substring appeared. JSON output so
-results diff across runs instead of being eyeballed.
-
-**Verification needs the same interpreter split as creation.** `verify.py` imports the
-loader for each artifact kind in-process, so one run cannot cover all three formats:
-
-| Artifacts | Interpreter | Why |
-|---|---|---|
-| `hf:bf16`, `gguf:*` | `training-cuda13` | transformers + llama-cli |
-| `hf:nvfp4` | `quant-nvfp4` | needs `compressed-tensors>=0.15.0` |
-| `exl3:*` | `quant-exl3` | exllamav3 |
-
-Loading an NVFP4 artifact under `training-cuda13` fails with
-`ImportError: compressed-tensors>=0.15.0 is required` — the artifact is fine, the
-interpreter is wrong.
-
-`summarize.py` merges every `verify-*.json` in the report directory, newest report per
-artifact label winning, so a stale run cannot overwrite a fresh one.
-
-#### Measured results — `qwopus-0.8b`
-
-All six artifacts, same three prompts, `scripts/quantize/summarize.py`:
-
-| Artifact | Kind | Size | Reasoning block | Expected answer |
-|---|---|---:|---|---|
-| BF16 (baseline) | hf | 1.7 GB | 3/3 | 3/3 |
-| GGUF Q8_0 | gguf | 834 MB | 3/3 | 3/3 |
-| GGUF Q4_K_M | gguf | 542 MB | 2/3 | 3/3 |
-| EXL3 4.0 bpw | exl3 | 1.08 GB | 3/3 | 3/3 |
-| EXL3 3.0 bpw | exl3 | 1.02 GB | 3/3 | **2/3** |
-| NVFP4 | hf | 892 MB | 2/3 | 3/3 |
-
-**The one cliff:** EXL3 at 3.0 bpw dropped the `code` prompt — the output no longer
-contained a function definition. Everything else held. That is the first measurable
-degradation in this set, and it appeared at the lowest bitrate, which is the expected
-direction.
-
-**The `close` column is truncation-sensitive, not a quality signal.** Q4_K_M and NVFP4
-score 2/3 there because their `arithmetic` answer ran past `--max-new 700` and the closing
-think tag never got emitted — the expected answer was still present in all three. Read the
-`expect` column for correctness; treat `close` as a check that the reasoning block
-terminated within the budget.
-
-**EXL3 is larger than GGUF Q4_K_M despite a lower decoder bitrate** because the vision
-tower is quantized at 6 bpw and the MTP head is kept — the decoder is 3.0/4.0 bpw, not the
-whole file. Size comparisons across formats are not apples-to-apples.
-
-Caveat: three prompts is a smoke test, not a benchmark. It catches gross breakage and
-obvious cliffs; it cannot rank formats by quality. For that, run a real eval suite.
-
-#### Pitfalls
-
-- **Two concurrent `conda create` calls corrupt the package cache** — they share
-  `~/miniconda/pkgs` and collide on `.partial` extraction. Serialize them.
-- **`import exllamav3_ext` alone fails** with a misleading `libc10.so` error. Import torch
-  first.
-- **`convert.py` is not in the exllamav3 wheel** — clone the repo into `runtimes/`.
-- **Unsloth's merge output is an incomplete model directory.** For multimodal architectures
-  it omits `preprocessor_config.json` and `video_preprocessor_config.json`, which EXL3's
-  config reader requires. Copy them from the base model first.
-- **Stock llama.cpp's converter is broken for `qwen3_5`** (issue #27019, closed as not
-  planned) — `_reorder_v_heads` hardcodes `head_dim=1` and doesn't expand
-  `in_proj_a`/`in_proj_b`. Unsloth's staged converter handles it; the runtime was never
-  affected.
-- **llama-cli renders the closing think token as `[End thinking]`**, not the raw token, so
-  a naive `close_tag in output` check reports a false negative.
-
-#### Publishing to the Hub
-
-One repo per format, suffixed from the base model's repo id:
-
-```
-<base>-GGUF     Q4_K_M + Q8_0 as single files
-<base>-EXL3     4.0bpw/ and 3.0bpw/ subdirectories
-<base>-NVFP4    backbone + MTP head at the repo root
-```
-
-Group the family in a Hub collection so the base, adapter, and every quant are reachable
-from any one of them.
-
-**`hf upload` commits at the end.** It uploads every file and creates one commit when the
-whole folder lands, so a multi-GB repo shows only `.gitattributes` while it runs. That is
-not a failed upload — judge the repo after the commit URL prints. If the card must be
-visible immediately, upload `README.md` as its own commit first.
-
-**Quantized repos need `base_model_relation: quantized`** in the card frontmatter.
-Without it the Hub tags the repo `base_model:finetune:<base>` instead of
-`base_model:quantized:<base>`, so it does not show as a quantization of the base model.
-`library_name: gguf` infers it; EXL3 and NVFP4 do not.
-
-Published family — `qwopus-0.8b`:
-
-- [Qwen3.5-0.8B-Opus-Reasoning-Distilled](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled) — BF16 base
-- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-LoRA](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-LoRA) — adapter
-- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-GGUF](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-GGUF)
-- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-EXL3](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-EXL3)
-- [Qwen3.5-0.8B-Opus-Reasoning-Distilled-NVFP4](https://huggingface.co/PhilipEriksson/Qwen3.5-0.8B-Opus-Reasoning-Distilled-NVFP4)
-- [Collection](https://huggingface.co/collections/PhilipEriksson/qwen35-08b-opus-reasoning-distilled-6ae3336176ac243223f27ee9)
-
-### Help
-```bash
-ml                # Shows global help with all commands
-ml help <cmd>     # Shows detailed help for a specific command
-```
-
-## 📚 Model Storage Structure
-
-Models are organized by **category** (base/quantized/finetuned), then by **family** (qwen, llama3), then by **format/bit-width**.
-
-### `models/base/` — Full-Precision Weights
-
-Original, unmodified model weights. Used as the starting point for fine-tuning.
-
-```
-base/
-└── <family>/
-    └── <variant>/
-        ├── config.json
-        ├── *.safetensors
-        ├── tokenizer.json
-        └── ...
-```
-
-### `models/quantized/` — Compressed Variants
-
-Organized by quantization format and bit-width:
-
-```
-quantized/
-└── <family>/
-    ├── gguf/                ← GGUF format (bit in filename: Q3_K_XL, Q4_K_M)
-    │   └── <variant>/
-    │       └── *.gguf
-    │
-    ├── auto-round/          ← AutoRound quantization
-    │   ├── 4bit/
-    │   ├── 8bit/
-    │   └── other/
-    │
-    ├── gptq/                ← GPTQ quantization
-    │   ├── 4bit/
-    │   ├── 8bit/
-    │   └── other/
-    │
-    ├── awq/                 ← AWQ quantization
-    │   ├── 4bit/
-    │   └── other/
-    │
-    ├── nvfp/                ← NVIDIA FP4/FP8 formats
-    │   ├── fp4/
-    │   └── fp8/
-    │
-    ├── mx/                  ← MX FP4/FP8 formats
-    │   ├── fp4/
-    │   └── fp8/
-    │
-    └── other/               ← exotic/custom quantizations (PARO, etc)
-```
-
-The `add-model` script auto-detects format and bit-width from the HF repo name and file contents, placing files in the correct folder.
-
-### `models/finetuned/` — LoRA & Merged Models
-
-```
-finetuned/
-└── <family>/
-    ├── lora/                ← LoRA adapter weights
-    ├── checkpoints/         ← training checkpoints (saved per epoch)
-    └── merged/              ← adapter merged back into base weights
-```
-
-### Model Registry
-
-`configs/models/registry.json` tracks all local models:
-
-```json
-{
-  "qwen": {
-    "models": {
-      "qwen3.6-27b-gguf": {
-        "type": "gguf",
-        "variant": "instruct",
-        "path": "/path/to/model/dir",
-        "file": "model.gguf",
-        "mmproj": "/path/to/vision-projection.gguf",
-        "status": "ready",
-        "hash": "sha256..."
-      }
-    }
-  }
-}
-```
-
-**Variant types:**
-| Variant | Description | Auto-Detect Hint |
-|---|---|---|
-| `pretrained` | Raw token predictor (no fine-tuning) | No "Instruct"/"Reasoning" in name |
-| `instruct` | SFT-finetuned for instruction following | Repo name contains `Instruct` |
-| `reasoning` | CoT-trained + RLHF/RLVR for chain-of-thought | Repo name contains `Thinking`, `Reasoning`, `R1` |
-
-The `serve-model` script reads this registry to resolve the model path, type, and optional vision projection.
-
-## 🐳 Docker Services
-
-### Docker Setup
-
-Choose the Docker setup that matches your OS:
-
-**Windows / WSL2 — Docker Desktop (Recommended)**
-
-Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) for Windows, enable the WSL2 backend, and make sure the NVIDIA GPU is toggled on in Settings → General. Docker Desktop handles GPU passthrough automatically on WSL2 — no manual configuration needed.
-
-**Linux Native — Docker Engine + NVIDIA Container Toolkit**
-
-Install Docker Engine from your distribution's repos and the NVIDIA Container Toolkit for GPU passthrough:
-```bash
-# Ubuntu/Debian
-sudo apt install docker.io nvidia-container-toolkit
-sudo systemctl enable --now docker
-# Configure nvidia as the default runtime
-sudo mkdir -p /etc/docker
-echo '{"runtimes":{"nvidia":{"path":"nvidia-container-runtime","args":[]}}}' | sudo tee /etc/docker/daemon.json
-sudo systemctl restart docker
-```
-For a terminal-based UI to manage containers (alternative to Docker Desktop's GUI), install **[LazyDocker](https://github.com/jesseduffield/lazydocker)**:
-```bash
-# Download the latest release
-LATEST=$(curl -s https://api.github.com/repos/jesseduffield/lazydocker/releases/latest | grep -oP '"tag_name":\K[^"]+')
-curl -L https://github.com/jesseduffield/lazydocker/releases/download/${LATEST}/lazydocker_${LATEST#v}_Linux_x86_64.tar.gz | tar xz
-sudo mv lazydocker /usr/local/bin/
-lazydocker --version
-```
-
-**Docker Desktop on Linux (Optional)**
-
-Docker Desktop is also available for Linux and works as a drop-in replacement. If you prefer the GUI, install it from [docker.com](https://www.docker.com/products/docker-desktop/) — the NVIDIA Container Toolkit is still required for GPU access.
-
-### Auto-Start with Windows Task Scheduler
-
-On WSL2, Docker containers don't survive a reboot. To auto-start vLLM and API+WebUI on login, create two scheduled tasks in Windows:
-
-**Start vLLM on login:**
-```powershell
-schtasks /create /tn "ML-Stack-vLLM" /tr "wsl bash -c 'cd /home/YOUR_USER/ml-stack && docker compose -f services/docker/docker-compose.yml up -d vllm'" /sc onlogon /ru YOUR_USER
-```
-
-**Start API + WebUI on login:**
-```powershell
-schtasks /create /tn "ML-Stack-API-WebUI" /tr "wsl bash -c 'cd /home/YOUR_USER/ml-stack && docker compose -f services/docker/docker-compose.yml up -d api-webui'" /sc onlogon /ru YOUR_USER
-```
-
-> **Note:** Replace `YOUR_USER` with your actual WSL username. Also replace `docker` with `"/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe"` if you use the WSL2 wrapper script.
-
-### Architecture
-
-Three modular Docker services:
-
-| Service | Dockerfile | Description |
-|---|---|---|
-| **vllm** | `services/vllm/Dockerfile` | vLLM model serving (GPU) |
-| **searxng** | `services/searxng/Dockerfile` | SearXNG metasearch engine |
-| **api-webui** | `services/api-webui/Dockerfile` | FastAPI proxy + Open WebUI |
-
-### vLLM Service
-
-Based on `vllm/vllm-openai:v0.20.1`. All model settings are driven by environment variables — no rebuild needed to swap models.
-
-**Config file:** `configs/vllm/qwen3.6-27b-int4.env`
-
-Contains all vLLM flags (`MODEL_NAME`, `MAX_MODEL_LEN`, `GPU_MEMORY_UTILIZATION`, etc). To swap models, create a new `.env` file with different settings.
-
-**How it works:**
-1. The `start.sh` entrypoint reads env vars and builds the `vllm serve` command
-2. `HF_HOME=/hf-cache` is set; the HF cache is volume-mounted from the host
-3. vLLM resolves `MODEL_NAME` through its native HF model resolution
-
-**Env file variables:**
-| Variable | Description |
-|---|---|
-| `MODEL_NAME` | HF model name or local path |
-| `MAX_MODEL_LEN` | Maximum context length |
-| `GPU_MEMORY_UTILIZATION` | GPU memory fraction (0.0–1.0) |
-| `ATTENTION_BACKEND` | e.g. `flashinfer` |
-| `PERFORMANCE_MODE` | e.g. `interactivity` |
-| `LANGUAGE_MODEL_ONLY` | `true` / omitted |
-| `KV_CACHE_DTYPE` | e.g. `fp8_e4m3` |
-| `MAX_NUM_SEQS` | Max concurrent sequences |
-| `SKIP_MM_PROFILING` | `true` / omitted |
-| `QUANTIZATION` | e.g. `auto_round` |
-| `REASONING_PARSER` | e.g. `qwen3` |
-| `ENABLE_AUTO_TOOL_CHOICE` | `true` / omitted |
-| `TOOL_CALL_PARSER` | e.g. `qwen3_coder` |
-| `ENABLE_PREFIX_CACHING` | `true` / omitted |
-| `ENABLE_CHUNKED_PREFILL` | `true` / omitted |
-| `SPECULATIVE_CONFIG` | JSON config string |
-| `HOST` | Bind address |
-| `PORT` | Container port (default 8000) |
-
-**Swap models at runtime:**
-
-**Option A — from HF cache (model already downloaded):**
-```bash
-# Create configs/vllm/other-model.env with new MODEL_NAME + settings
-# MODEL_NAME can be an HF repo ID (uses ~/.cache/huggingface/hub)
-docker compose -f services/docker/docker-compose.yml --env-file configs/vllm/other-model.env up -d vllm
-```
-
-**Option B — from local model storage (`~/ml-stack/models/`):**
-```bash
-# Point MODEL_NAME to the path inside the container:
-MODEL_NAME=/opt/models/quantized/qwen/auto-round/4bit/your-model-folder
-```
-
-Both the HF cache (`~/.cache/huggingface/hub`) and local model directory (`~/ml-stack/models`) are mounted read-only into the container.
-
-### API + WebUI Service
-
-Based on `ghcr.io/open-webui/open-webui:main`. Adds a FastAPI proxy that:
-- Translates between OpenAI API format and Responses API format
-- Proxies all requests to the vLLM backend
-- Runs on port 8000 alongside Open WebUI on port 8080
-
-**Ports:**
-| Host Port | Container Port | Service |
-|---|---|---|
-| 8080 | 8000 | vLLM (direct API access) |
-| 8000 | 8000 | FastAPI proxy |
-| 3000 | 8080 | Open WebUI (web interface) |
-| 8888 | 8080 | SearXNG (direct search access) |
-
-### Running with Docker Compose
-
-```bash
-# Build images
-docker compose -f services/docker/docker-compose.yml build
-
-# Start everything
-docker compose -f services/docker/docker-compose.yml up -d
-
-# Start only vLLM
-docker compose -f services/docker/docker-compose.yml up -d vllm
-
-# Start only the API+WebUI
-docker compose -f services/docker/docker-compose.yml up -d api-webui
-
-# Stop everything
-docker compose -f services/docker/docker-compose.yml down
-
-# View logs
-docker compose -f services/docker/docker-compose.yml logs -f vllm
-docker compose -f services/docker/docker-compose.yml logs -f api-webui
-```
-
-### Web Search
-
-The stack includes a SearXNG search service that provides web search results to the LLM via the FastAPI proxy. SearXNG is a metasearch engine aggregating results from 70+ search engines (Google, Bing, Wikipedia, and more). A DuckDuckGo fallback is available if SearXNG is unavailable.
-
-**Architecture:**
-
-| Service | Host Port | Container Port | Purpose |
-|---|---|---|---|
-| **vllm** | 8080 | 8000 | vLLM model serving (direct API) |
-| **api-webui** | 8000 | 8000 | FastAPI proxy + Open WebUI (8080→3000) |
-| **searxng** | 8888 | 8080 | SearXNG search engine |
-
-The FastAPI proxy at port 8000 routes search requests to the SearXNG container and exposes a clean REST API with an OpenAPI spec for auto-discovery.
-
-**Enabling web search in Open WebUI:**
-
-1. Open Open WebUI (port 3000) and navigate to **Settings → Integrations → Tool Servers**
-2. Click **Add New** and enter the following:
-   - **URL:** `http://<hostname>:8000` — Use your server's hostname or IP. If accessing over Tailscale from another machine, use your Tailscale URL (e.g., `http://p5090.taila6ea3a.ts.net:8000`). If accessing locally, use `http://localhost:8000`
-   - **Name:** `Web Search`
-3. Save — Open WebUI will auto-discover the `search_web` tool from the OpenAPI spec at `/openapi.json`
-
-> **Why not `localhost` when accessing remotely?** The Tool Server URL is resolved by your *browser*, not the server. When connecting from a MacBook over Tailscale, `localhost` resolves to the MacBook — not the server hosting the containers.
-
-**Search endpoint:**
-
-```bash
-# Search via GET
-curl "http://localhost:8000/search?q=what+is+the+current+date"
-
-# Search via POST
-curl -X POST http://localhost:8000/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "DDR5 RAM prices", "max_results": 5}'
-```
-
-**Start all services including search:**
-```bash
-docker compose -f services/docker/docker-compose.yml up -d
-```
-
-## 🤖 Using with Claude Code
-
-`init.sh --install` automatically sets up `claude-local` in your `~/.bashrc`. It dynamically detects your active inference backend — no manual config needed.
-
-**How it works:**
-1. **vLLM Docker** — `claude-local` checks if the `vllm-server` container is running and reads `MODEL_NAME` from its environment
-2. **llama.cpp (GGUF)** — When you run `ml serve-model`, it records the active model. `claude-local` reads this on next launch
-
-**Switch models for vLLM:**
-```bash
-# Point to a different vLLM env file
-ml set-vllm-env qwen3.6-27b-int4.env
-docker compose -f services/docker/docker-compose.yml --env-file configs/vllm/qwen3.6-27b-int4.env up -d vllm
-claude-local   # picks up the new model automatically
-```
-
-**Serve a GGUF model and connect:**
-```bash
-ml serve-model qwen qwen3.6-27b-gguf
-# In another terminal:
-claude-local   # detects the running llama.cpp server
-```
-
-> **Note:** The `.claude_env` file in `~/ml-stack/` is created by `init.sh` and sources `scripts/utils/get-claude-env` to detect the active model. Don't edit it manually.
-
-## 🐍 Conda Environments
-
-| File | Conda Env Name | Purpose |
-|---|---|---|
-| `envs/inference-vllm.yml` | `inference-vllm` | vLLM inference |
-| `envs/training.yml` | `training` | PyTorch 2.4.0 + CUDA 12.1 + Unsloth |
-| (manual) | `training-cuda13` | PyTorch (cu130) + CUDA 13.0 + Flash Attention 2 |
-| `envs/grpo-trl.yml` | `grpo-trl` | **Post-training / RLVR**: TRL 0.23.1 + vLLM 0.11.0 + torch 2.8.0+cu128 (created Oct 2026, pins in `envs/grpo-trl.txt`) |
-
-```bash
-# Create environments
-conda env create -f envs/inference-vllm.yml
-conda env create -f envs/training.yml
-
-# Optional: CUDA 13 training environment (recommended for RTX 5090)
-conda create -n training-cuda13 python=3.12 -y
-conda activate training-cuda13
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-# Install the community flash-attn cu130 wheel (get latest from flash-attn GitHub releases)
-pip install flash-attn --no-cache-dir
-pip install unsloth --no-deps
-pip install unsloth_zoo --no-deps
-pip install trl datasets accelerate peft sentence-transformers
-# Switch to use it:
-ml use-training-env training-cuda13
-```
-
-## 📊 Evaluation
-
-Evaluate your local model against standard benchmarks using [lm-eval](https://github.com/EleutherAI/lm-evaluation-harness).
-
-**Install once:**
-```bash
-pip install 'lm-eval[multitask]'
-# or inside your conda env:
-conda activate training
-pip install 'lm-eval[multitask]'
-```
-
-**Run against your active backend:**
-```bash
-# Default suite (MMLU, GSM8K, HellaSwag, ARC-Challenge)
-ml eval
-
-# Specific tasks
-ml eval mmlu,gsm8k
-
-# With custom batch size (higher = faster but more VRAM)
-ml eval mmlu,ifeval 8
-```
-
-The `ml eval` script automatically detects your running vLLM container or llama.cpp server, sends all benchmark prompts through your API, and saves result JSONs to `outputs/evals/`.
-
-### Available Tasks
-
-| Task | Description | Approx. Questions | Time on RTX 5090 |
-|---|---|---|---|
-| `mmlu` | Massive Multitask Language Understanding (57 subjects) | ~5,700 | ~10 min |
-| `gsm8k` | Grade School Math | 1,319 | ~3 min |
-| `hellaswag` | Commonsense NLI | 10,042 | ~15 min |
-| `arc_challenge` | AI2 Reasoning Challenge (hard) | 1,102 | ~3 min |
-| `arc_easy` | AI2 Reasoning Challenge (easy) | 2,258 | ~5 min |
-| `truthfulqa_gen` | TruthfulQA (generation) | 817 | ~2 min |
-| `ifeval` | Instruction Following Eval | 3,132 | ~8 min |
-| `winogrande` | Winograd Schema | 1,267 | ~3 min |
-| `bbh` | Beyond Benchmark-Hard (17 tasks) | ~3,900 | ~10 min |
-
-> **Note:** Times are approximate for a 27B int4 model at batch_size=4. Your results may vary.
->
-> Benchmark datasets (~200 MB total) are downloaded on first run and cached in `~/.cache/huggingface/datasets/`.
-
-### Eval Registry
-
-Each benchmark run is recorded in `configs/evals/registry.json` with the model, backend, timestamp, tasks, scores, and result file path. This lets you track how models improve over time without digging through raw JSON files.
-
-```bash
-# View all recorded evals
-ml evals
-
-# View a single eval result in detail
-cat outputs/evals/qwen3.6-27b-int4-2026-05-08_22-00.json | jq .results
-
-# Compare two results (manually or with a diff tool)
-diff <(jq '.results | keys' file1.json) <(jq '.results | keys' file2.json)
-```
-
-## ⚡ GPU Optimization
-
-### Power Management
-
-The RTX 5090 has a 575W TDP by default. For quieter, cooler operation (especially during long eval runs or idle serving), you can lower the power limit.
-
-**Set a power limit:**
-```bash
-# Check current power limit
-nvidia-smi -q | grep "Power"
-
-# Set a custom power limit (watts)
-sudo nvidia-smi -pl 400
-
-# Reset to default
-sudo nvidia-smi -pl 575
-```
-
-**Recommended:** **400W** is the best everyday power limit on both Linux and Windows — noticeably cooler and quieter with only a minor performance hit (~7-12%). The 400W floor is hardware-enforced on both platforms. On Windows/WSL2 you can combine it with undervolting (MSI Afterburner) for better performance-per-watt. On Linux, `nvidia-smi` doesn't expose voltage curves.
-
-**Common power profiles:**
-
-| Target Power | Use Case | Performance Impact |
-|---|---|---|
-| 575W (default) | Max throughput (training, large batch evals) | 100% baseline |
-| 450W | Balanced — good for serving with lower noise | ~5-10% slower token gen |
-| 400W **(recommended)** | Best overall — quiet serving, minimal perf loss | ~7-12% slower alone |
-
-> **Note:** The RTX 5090's minimum power limit is **400W** (hardware-enforced on both Linux and Windows). On Linux, set it via `sudo nvidia-smi -pl 400`. On Windows/WSL2, set the MSI Afterburner power slider to **69%** (~400W). Undervolting doesn't let you go below 400W — it adjusts the voltage/frequency curve for better performance-per-watt at the same power limit (see below).
-
-**Make power limit persistent:**
-```bash
-# Add to ~/.bashrc
-sudo nvidia-smi -pl 400
-```
-
-### Clock Speed Management
-
-For fine-grained control, you can also limit the maximum GPU clock:
-```bash
-# List supported clock speeds
-nvidia-smi -q -d CLOCK | grep "Graphics"
-
-# Set max graphics clock (MHz)
-sudo nvidia-smi -lgc 2000
-
-# Remove clock limit
-sudo nvidia-smi -lgc 0
-```
-
-### Undervolting (Advanced — WSL2 Only)
-
-> **Undervolting is only available on Windows/WSL2.** NVIDIA's Linux driver does not expose the voltage/frequency curve table, so tools like `nvidia-smi` on native Linux cannot undervolt. If you're on WSL2, apply undervolting from the Windows host — the GPU sees it regardless of which OS is running the workload.
-
-For advanced users on WSL2, undervolting delivers near-default performance with better thermals and efficiency at the same 400W limit — the voltage/frequency curve lets the GPU maintain higher clocks per watt.
-
-**Suggested starting point for RTX 5090:**
-- **Core voltage cap:** `875 mV` at `2827 MHz`
-- This retains boost clocks close to the default while dramatically reducing power consumption and temperatures
-
-> **How to do it (Windows host):** Use **[MSI Afterburner](https://www.msi.com/Liqud-X/Afterburner)** — open the Tweaker tab, go to Settings (gear icon), raise the voltage limit ceiling, then drag individual voltage/frequency curve points down. Set the target point to `875 mV @ 2827 MHz` and flatten all higher-frequency points to the same voltage. In the Tweaker tab, set the **Power Limit** slider to **69%** (≈ 400W on the RTX 5090) to cap power without `nvidia-smi`. Apply, save to profile, and verify stability under load.
-
-### vLLM Settings for RTX 5090
-
-In your vLLM `.env` file, these settings affect power usage:
-
-| Variable | Power-Conscious | Performance | Description |
-|---|---|---|---|
-| `GPU_MEMORY_UTILIZATION` | `0.85` | `0.95` | Lower = less VRAM pressure, less compute work |
-| `MAX_NUM_SEQS` | `1` | `4` | Fewer concurrent sequences = less power |
-| `PERFORMANCE_MODE` | `interactivity` | `throughput` | Interactivity prioritizes low latency over batch size |
-
-For a power-conscious setup serving a single model interactively:
-```bash
-GPU_MEMORY_UTILIZATION=0.85
-MAX_NUM_SEQS=1
-PERFORMANCE_MODE=interactivity
-```
-
-## Runtimes
-
-Optimized configurations for specific GPU targets, validated with end-to-end benchmarks.
-
-### RTX 5090 — Long-Context Runtime
-
-For workloads with 40–100K context on a single RTX 5090 (32 GB). Combines KVFlash (bounded residency), PFlash (prefill compression), and DFlash DDTree (speculative decode) from [lucebox-hub](runtimes/lucebox-hub/).
-
-**Prerequisites:**
-
-1. Clone the lucebox-hub repo into `runtimes/`:
-```bash
-cd ~/ml-stack/runtimes
-git clone https://github.com/Luce-Org/lucebox-hub.git
-cd lucebox-hub
-git submodule update --init --recursive
-```
-2. Build the server (follow [runtimes/lucebox-hub/README.md](runtimes/lucebox-hub/README.md) for cmake/dependencies):
-```bash
-conda create -n dflash -y "gcc=15" cuda-toolkit ninja cmake make && conda activate dflash
-
-cd ~/ml-stack/runtimes/lucebox-hub/server
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=120 -DDFLASH27B_USER_CUDA_ARCHITECTURES=120 -DDFLASH27B_ENABLE_BSA=ON
-make -j$(nproc)
-```
-3. Download the required drafter models (see table below).
-
-**Required models:**
-
-**Required models:**
-
-| Model | Path | Purpose | Size |
-|---|---|---|---|
-| Qwen3.6-27B UD-Q5_K_XL | `models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf` | Target model | ~18 GB |
-| DFlash Drafter | `models/drafter/model.safetensors` | Decode speculation | ~3.3 GB |
-| PFlash Drafter | `models/pflash_drafter/Qwen3-0.6B-BF16.gguf` | Prefill compression + KVFlash scoring | ~1.1 GB |
-
-**Quick start:**
-```bash
-ml serve-dflash      # start
-ml serve-dflash --stop    # stop
-ml serve-dflash --restart # restart
-```
-
-**Manual launch:**
-
-```bash
-export DFLASH_FP_USE_BSA=1
-export DFLASH_FP_ALPHA=0.70
-
-# Required: conda dflash build env libraries (CUDA 13 runtime)
-export LD_LIBRARY_PATH="/home/px5090/miniconda3/envs/dflash/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-source ~/ml-stack/configs/dflash/server.env
-
-cd ~/ml-stack/runtimes/lucebox-hub/server/build
-./dflash_server \
-  ~/ml-stack/models/base/Qwen3.6-27B-UD-Q5_K_XL.gguf \
-  --draft ~/ml-stack/models/drafter/model.safetensors \
-  --prefill-drafter ~/ml-stack/models/pflash_drafter/Qwen3-0.6B-BF16.gguf \
-  --ddtree --ddtree-budget 22 \
-  --fa-window 4096 \
-  --max-ctx 262144 \
-  --kvflash 32768 \
-  --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --prefill-compression auto \
-  --prefill-threshold 32000 \
-  --prefill-keep-ratio 0.05 \
-  --default-max-tokens 1024 \
-  --port 8080
-```
-
-**Why these flags:**
-
-All values are set in `configs/dflash/server.env` — edit that file to adjust defaults.
-
-| Flag | Value | Reason |
-|---|---|---|
-| `--kvflash 32768` | 32K pool | Holds most of a 60K context without eviction. `auto` caps at 16K (too small for 50K+ prompts). |
-| `--cache-type-k q8_0` / `--cache-type-v q8_0` | q8_0 | 8-bit quantized KV cache. Faster decode than bf16, better quality than tq3_0. Uses ~3.2 GiB for the 32K pool. |
-| `--prefill-compression auto` | `auto` | Activates at 32K+ tokens via the pflash drafter. Compresses a 96K prefill from 143s → 3.3s. |
-| `--prefill-threshold 32000` | 32000 | PFlash only triggers above this token count. Below, the target runs natively (no overhead). |
-| `--prefill-keep-ratio 0.05` | 0.05 | Keeps 5% of compressed tokens. Balances quality vs. size. |
-| `--fa-window 4096` | 4096 | Sliding attention window. Drops system prompt from attention at long contexts. |
-| `--ddtree-budget 22` | 22 | Tree verify budget. Stable on 5090. |
-| `--default-max-tokens 1024` | 1024 | Response cap. Required for OpenWebUI compatibility. |
-
-**Frontend proxy (for OpenWebUI):**
-
-Spec decode requires `temperature=0` and `top_p=1` (any other value disables the draft-verify alignment). The `services/api-webui/proxy.env` file forces these defaults:
-
-```
-# proxy.env
-DEFAULT_MAX_TOKENS=1024
-DEFAULT_TEMPERATURE=0
-DEFAULT_TOP_P=1
-```
-
-### Local GGUF Serving — llama.cpp
-
-For lightweight local serving without Docker, use llama.cpp to run quantized GGUF models directly on your GPU. Models are first registered via `ml add-model`, then served with a single command.
-
-**Quick start:**
-```bash
-ml serve-model <family> <variant>
-```
-
-For example:
-```bash
-ml serve-model qwen qwen3.6-27b-gguf
-```
-
-The script reads the model registry, resolves the `.gguf` file path, and launches `llama-server` from `runtimes/llama.cpp/`. Active state is tracked in `llama/` so `claude-local` and other tools can auto-detect the running server.
-
-**VRAM safety:** Before launching, `serve-model` checks if the vLLM Docker container is running and will warn you — running both simultaneously on a consumer GPU will exceed VRAM.
-
-**Why use llama.cpp vs. dflash:**
-
-| | llama.cpp | dflash (KVFlash + PFlash) |
-|---|---|---|
-| Best for | Short prompts, interactive chat, lightweight setups | Long context (40K+) |
-| Setup | Single command, no Docker | Multiple model files, env config |
-| Speculative decode | Basic (mtp/draft) | DDTree with high accept rates |
-| Prefill compression | None | PFlash (40x speedup at 96K) |
-| KV flash/paging | None | 32K pool with host RAM spillover |
-
-For workloads that build up long context over time, dflash is the better choice. For quick local serving or short conversations, llama.cpp is simpler to set up.
-
-See [Serving Models](#serving-models) for `serve-model` flags and [Claude Local](#claude-local) for auto-detection details.
-
-## 📦 Dependencies
-
-See [Requirements](#requirements) above for the full list.
+| [docs/install.md](docs/install.md) | Drivers, Docker, conda envs, llama.cpp, `init.sh` |
+| [docs/cli.md](docs/cli.md) | Every command, flag, and example |
+| [docs/models.md](docs/models.md) | Storage layout, registry schema, variant types |
+| [docs/serving.md](docs/serving.md) | vLLM service, llama.cpp, proxy/WebUI, `claude-local` |
+| [docs/training.md](docs/training.md) | LoRA/QLoRA/full FT, adapter knobs, runs, dashboards, GRPO/RLVR |
+| [docs/quantization.md](docs/quantization.md) | GGUF/EXL3/NVFP4, environments, verification, publishing |
+| [docs/evaluation.md](docs/evaluation.md) | lm-eval tasks, registry, comparing results |
+| [docs/gpu-tuning.md](docs/gpu-tuning.md) | Power limits, clocks, undervolting, vLLM power settings |
+| [docs/architecture.md](docs/architecture.md) | How the pieces fit, data flow, extension points |
+
+## License
+
+MIT — see [LICENSE](LICENSE).

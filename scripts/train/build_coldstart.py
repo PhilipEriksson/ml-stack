@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the gsm8k-coldstart dataset (train/eval JSONL) for grpo-0.6b.
+"""Build a verifier-task dataset (train/eval JSONL) for the RLVR pipeline.
 
 Step 1 of the pipeline — the artifact sft.py and grpo.py both consume.
 Source: openai/gsm8k ("main", train split). Held-out eval is carved out
@@ -12,18 +12,18 @@ Output schema (matches sft.py to_chat + grpo.py reward kwargs):
 
 Usage:
   ~/miniconda/envs/grpo-trl/bin/python build_coldstart.py
-  ~/miniconda/envs/grpo-trl/bin/python build_coldstart.py --n 500 --sample
+  ~/miniconda/envs/grpo-trl/bin/python build_coldstart.py --n 500 --out datasets/processed/<family>/<dataset>
 """
 
 import argparse
 import json
+import os
 import pathlib
 import random
 
 from datasets import load_dataset
 
-HERE = pathlib.Path(__file__).resolve().parent
-OUT_DIR = HERE / "../../datasets/processed/gsm8k-coldstart"
+ML_STACK = pathlib.Path(os.environ.get("ML_STACK_HOME", pathlib.Path.home() / "ml-stack"))
 
 
 def main() -> None:
@@ -31,7 +31,13 @@ def main() -> None:
     p.add_argument("--eval-size", type=int, default=500)
     p.add_argument("--n", type=int, default=None, help="cap total examples (smoke test)")
     p.add_argument("--seed", type=int, default=13)
+    p.add_argument("--out", default="datasets/processed/gsm8k-coldstart",
+                   help="output directory, relative to the repo root")
     args = p.parse_args()
+
+    out_dir = pathlib.Path(args.out)
+    if not out_dir.is_absolute():
+        out_dir = ML_STACK / out_dir
 
     ds = load_dataset("openai/gsm8k", "main", split="train")
     ds = ds.shuffle(seed=args.seed)
@@ -52,9 +58,9 @@ def main() -> None:
     eval_rows = rows[: args.eval_size]
     train_rows = rows[args.eval_size :]
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for name, data in (("train", train_rows), ("eval", eval_rows)):
-        path = (OUT_DIR / f"{name}.jsonl").resolve()
+        path = (out_dir / f"{name}.jsonl").resolve()
         with open(path, "w") as f:
             for r in data:
                 f.write(json.dumps(r) + "\n")

@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Stage 2: GRPO/RLVR run for grpo-0.6b (TRL GRPOTrainer, vLLM colocate).
+"""Stage 2: GRPO/RLVR run (TRL GRPOTrainer, vLLM colocate).
 
-Single-GPU shape (RTX 5090): trainer + vLLM rollout engine share the card
-via vllm_mode="colocate". The verifier (verifier.py) IS the reward — no
-reward model, no human labels. Stop the :30000 server first; colocate
-needs the VRAM.
+Single-GPU shape: trainer + vLLM rollout engine share the card via
+vllm_mode="colocate". The verifier (verifier.py) IS the reward — no reward
+model, no human labels. Stop any other GPU server first; colocate needs the
+VRAM.
 
-Prereqs, in order (see scripts/train/README.md):
+Prereqs, in order (see docs/training.md):
   1. baseline_probe.py shows 10-30% pass rate (else SFT cold-start first)
   2. dataset JSONL with "prompt" and "answer" columns
 
 Usage:
   ~/miniconda/envs/grpo-trl/bin/python grpo.py \
-      --train datasets/processed/gsm8k-coldstart/train.jsonl \
-      --model outputs/runs/grpo-0.6b-sft/final \
-      --out ../../outputs/runs/grpo-0.6b-grpo
+      --train datasets/processed/<family>/<dataset>/train.jsonl \
+      --model outputs/runs/<run-name>-sft/final \
+      --out   outputs/runs/<run-name>-grpo
 """
 
 import argparse
@@ -36,7 +36,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--train", required=True)
     p.add_argument("--model", required=True, help="SFT checkpoint or HF repo id")
-    p.add_argument("--out", default="../../outputs/runs/grpo-0.6b-grpo")
+    p.add_argument("--out", default="outputs/runs/grpo")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--num-generations", type=int, default=8)
     p.add_argument("--lr", type=float, default=1e-6)

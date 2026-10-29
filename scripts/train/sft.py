@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Stage 1: SFT cold-start for grpo-0.6b (TRL SFTTrainer, Qwen3-0.6B).
+"""Stage 1: SFT cold-start for a verifier-reward (RLVR) pipeline.
 
 Purpose: lift the base model's pass rate on the verifier task into the
 10-30% band so GRPO has gradient signal. Keep it short — 1-2 epochs on a
-few thousand GSM8K-style examples. This is a cold-start, not a showcase.
+few thousand examples. This is a cold-start, not a showcase.
 
-Expected dataset shape (JSONL, {"prompt": ..., "answer": ...}) at
-datasets/processed/gsm8k-coldstart/train.jsonl and eval.jsonl.
+Expected dataset shape (JSONL, {"prompt": ..., "answer": ..., "solution": ...}).
 
 Usage:
   ~/miniconda/envs/grpo-trl/bin/python sft.py \
-      --train datasets/processed/gsm8k-coldstart/train.jsonl \
-      --eval datasets/processed/gsm8k-coldstart/eval.jsonl \
-      --model Qwen/Qwen3-0.6B \
-      --out ../../outputs/runs/grpo-0.6b-sft
+      --train datasets/processed/<family>/<dataset>/train.jsonl \
+      --eval  datasets/processed/<family>/<dataset>/eval.jsonl \
+      --model <hf-repo-id-or-local-path> \
+      --out   outputs/runs/<run-name>-sft
 """
 
 import argparse
@@ -48,8 +47,8 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--train", required=True)
     p.add_argument("--eval", default=None)
-    p.add_argument("--model", default="Qwen/Qwen3-0.6B")
-    p.add_argument("--out", default="../../outputs/runs/grpo-0.6b-sft")
+    p.add_argument("--model", required=True, help="HF repo id or local path")
+    p.add_argument("--out", default="outputs/runs/sft")
     p.add_argument("--epochs", type=float, default=2.0)
     p.add_argument("--lr", type=float, default=6e-5)
     p.add_argument("--sample", action="store_true", help="fast smoke test")

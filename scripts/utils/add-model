@@ -9,19 +9,21 @@ REGISTRY="$ROOT/configs/models/registry.json"
 # USAGE
 # =========================
 # Modes:
-#   add-model auto <hf-repo> [--type base|quantized|finetuned]
+#   add-model auto <hf-repo> [--type base|quantized|finetuned] [--family <name>]
 #   add-model <family> <variant> <source> [--type base|quantized|finetuned] [--file <filename>]
+#   add-model <family> <variant> --url <hf-file-url>
 #
 # Auto-detects quant format and bit-width from HF repo name/files.
-# --type overrides auto-detection.
-# --file downloads only a specific file from the repo (useful for GGUF repos with multiple quantizations).
+# --type overrides type detection; --family overrides family detection.
+# --file downloads only a specific file from the repo (useful for GGUF repos
+# with multiple quantizations).
 #
 # Examples:
-#   add-model auto bartowski/Llama-3.1-8B-Instruct-GGUF
-#   add-model auto Lorbus/Qwen3.6-27B-int4-AutoRound
-#   add-model qwen qwen3.5-32b HuggingFaceTB/SmolLM2-1.7B-Instruct --type base
-#   add-model qwen qwopus3.6-27b-v2 Jackrong/Qwopus3.6-27B-v2-GGUF --file Qwopus3.6-27B-v2-Q4_K_M.gguf
-#   add-model qwen qwopus3.6-27b-v2 --url https://huggingface.co/Jackrong/Qwopus3.6-27B-v2-GGUF/resolve/main/Qwopus3.6-27B-v2-Q4_K_M.gguf
+#   add-model auto <org>/<model>-GGUF
+#   add-model auto <org>/<model>-int4-AutoRound
+#   add-model <family> <variant> <org>/<model> --type base
+#   add-model <family> <variant> <org>/<model>-GGUF --file <model>-Q4_K_M.gguf
+#   add-model <family> <variant> --url https://huggingface.co/<org>/<repo>/resolve/main/<file>.gguf
 
 # =========================
 # BIT-WIDTH DETECTION
@@ -82,6 +84,38 @@ detect_bits() {
 }
 
 # =========================
+# FAMILY DETECTION
+# =========================
+# Families are just directory groupings under models/. Detection is a keyword
+# match on the repo name; anything unrecognised needs --family.
+detect_family() {
+  local name="$1"
+  local lower
+  lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+
+  case "$lower" in
+    *qwen*)      echo "qwen" ;;
+    *llama*)     echo "llama" ;;
+    *mistral*)   echo "mistral" ;;
+    *mixtral*)   echo "mixtral" ;;
+    *gemma*)     echo "gemma" ;;
+    *phi-*)      echo "phi" ;;
+    *deepseek*)  echo "deepseek" ;;
+    *glm*)       echo "glm" ;;
+    *granite*)   echo "granite" ;;
+    *nemotron*)  echo "nemotron" ;;
+    *olmo*)      echo "olmo" ;;
+    *falcon*)    echo "falcon" ;;
+    *smollm*)    echo "smollm" ;;
+    *exaone*)    echo "exaone" ;;
+    *kimi*)      echo "kimi" ;;
+    *minimax*)   echo "minimax" ;;
+    *gpt-oss*)   echo "gpt-oss" ;;
+    *)           echo "" ;;
+  esac
+}
+
+# =========================
 # PARSE INPUT
 # =========================
 MODE=$1
@@ -90,6 +124,7 @@ shift || true
 TYPE=""
 FILE=""
 URL=""
+FAMILY_OVERRIDE=""
 
 POSITIONAL_ARGS=()
 
@@ -107,6 +142,10 @@ while [[ $# -gt 0 ]]; do
       URL="$2"
       shift 2
       ;;
+    --family)
+      FAMILY_OVERRIDE="$2"
+      shift 2
+      ;;
     *)
       POSITIONAL_ARGS+=("$1")
       shift
@@ -120,8 +159,7 @@ done
 FROM_URL=false
 if [ -n "$URL" ]; then
   # Parse URLs like:
-  #   https://huggingface.co/Jackrong/Qwopus3.6-27B-v2-GGUF/resolve/main/Qwopus3.6-27B-v2-Q4_K_M.gguf
-  #   https://huggingface.co/janus/project-aura/resolve/main/file.gguf
+  #   https://huggingface.co/<org>/<repo>/resolve/<branch>/<filename>
   if [[ "$URL" =~ ^https://huggingface\.co/([^/]+/[^/]+)/resolve/[^/]+/(.+)$ ]]; then
     SOURCE="${BASH_REMATCH[1]}"
     FILE="${BASH_REMATCH[2]}"
@@ -148,13 +186,15 @@ if [ "$MODE" == "auto" ]; then
   REPO_NAME=$(basename "$SOURCE")
   LOWER=$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
 
-  # Detect family from repo name
-  if [[ "$LOWER" == *"qwen"* ]]; then
-    FAMILY="qwen"
-  elif [[ "$LOWER" == *"llama"* ]]; then
-    FAMILY="llama3"
+  # Detect family from repo name (or --family)
+  if [ -n "$FAMILY_OVERRIDE" ]; then
+    FAMILY=$(echo "$FAMILY_OVERRIDE" | tr '[:upper:]' '[:lower:]')
   else
+    FAMILY=$(detect_family "$REPO_NAME")
+  fi
+  if [ -z "$FAMILY" ]; then
     echo "❌ Could not auto-detect family from $SOURCE"
+    echo "   Pass it explicitly: ml add-model auto $SOURCE --family <name>"
     exit 1
   fi
 

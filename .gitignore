@@ -34,7 +34,7 @@ runtimes/**/*
 .claude_env
 .claude/
 configs/llama/
-configs/vllm/.active-vllm
+configs/vllm/active.env
 configs/.active-training-env
 
 # =========================
@@ -44,6 +44,10 @@ configs/models/registry.json
 configs/datasets/registry.json
 configs/evals/registry.json
 configs/runs/registry.json
+
+# Local run configs — the tracked reference is *.example.json
+configs/training/*.json
+!configs/training/*.example.json
 
 # =========================
 # PYTHON / ENV

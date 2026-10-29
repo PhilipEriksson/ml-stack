@@ -8,12 +8,15 @@ CONFIG="$ROOT/configs/.active-training-env"
 if [ -z "$1" ]; then
   echo "Usage: use-training-env <env-name>"
   echo ""
-  echo "  Sets the active training conda environment. All training scripts"
-  echo "  will use this environment by default."
+  echo "  Sets the active training conda environment. Training scripts and"
+  echo "  'ml quantize --format gguf' resolve their interpreter from it."
   echo ""
-  echo "  Examples:"
-  echo "    ml use-training-env training        # stable (CUDA 12.8)"
-  echo "    ml use-training-env training-cuda13  # experimental (CUDA 13.0)"
+  echo "  Environments defined in envs/:"
+  for f in "$ROOT"/envs/*.yml; do
+    [ -f "$f" ] || continue
+    name=$(grep '^name:' "$f" | awk '{print $2}')
+    printf '    %-16s (%s)\n' "${name:-$(basename "$f" .yml)}" "$(basename "$f")"
+  done
   echo ""
   echo "  Current: $(cat "$CONFIG" 2>/dev/null || echo 'training (default)')"
   exit 0
@@ -30,11 +33,11 @@ done
 
 if [ "$FOUND" = false ]; then
   echo "❌ Conda environment '$1' not found"
-  echo "   Create it first, or check the name."
+  echo "   Create it first: conda env create -f envs/<file>.yml"
   exit 1
 fi
 
 mkdir -p "$(dirname "$CONFIG")"
 echo "$1" > "$CONFIG"
 echo "✅ Active training environment → $1"
-echo "   All training scripts will now use this environment"
+echo "   Training scripts and GGUF quantization will use this environment"

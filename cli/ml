@@ -9,20 +9,19 @@ show_global_help() {
   echo "===================="
   echo ""
   echo "Usage:"
-  echo "  ml add-model auto <hf-repo> [--type base|quantized|finetuned]"
+  echo "  ml add-model auto <hf-repo> [--type base|quantized|finetuned] [--family <name>]"
   echo "  ml add-model <family> <variant> <source> [--type base|quantized|finetuned]"
   echo "  ml add-dataset <family> <hf-dataset>"
   echo "  ml process-dataset <family> <dataset>"
   echo "  ml sample-dataset <family> <dataset> <n>"
-  echo "  ml create-training-run <run-name> <model> <dataset>"
+  echo "  ml create-training-run <run-name> <family/model> <family/dataset>"
   echo "  ml execute-training-run <run-name>"
   echo "  ml tensorboard          # loss curves for all runs (port 6006)"
   echo "  ml aim-ui               # run comparison UI (port 43801)"
   echo "  ml use-training-env [env-name]"
   echo "  ml kill-training"
-  echo "  ml serve-dflash [--stop]"
   echo "  ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n]"
-  echo "  ml set-vllm-env <env-file-name>"
+  echo "  ml set-vllm-env [env-file-name]"
   echo "  ml eval [tasks] [batch_size]"
   echo "  ml evals"
   echo "  ml compare-runs <run1> <run2>"
@@ -31,6 +30,8 @@ show_global_help() {
   echo ""
   echo "Help:"
   echo "  ml help <command>"
+  echo "  docs/ — full documentation (install, cli, models, serving, training,"
+  echo "          quantization, evaluation, gpu-tuning, architecture)"
   echo ""
 }
 
@@ -39,9 +40,12 @@ show_help() {
     add-model)
       echo "ml add-model"
       echo "  Downloads and registers a model from Hugging Face"
-      echo "  Auto-detects format (GGUF, GPTQ, AWQ, AutoRound) and bit-width"
-      echo "  Usage: ml add-model auto <hf-repo> [--type base|quantized|finetuned]"
-      echo "  Usage: ml add-model <family> <variant> <source> [--type base|quantized|finetuned]"
+      echo "  Auto-detects type (base/quantized/finetuned), quant format (GGUF, GPTQ,"
+      echo "  AWQ, AutoRound, NVFP4, MXFP4) and bit-width"
+      echo "  Usage: ml add-model auto <hf-repo> [--type base|quantized|finetuned] [--family <name>]"
+      echo "  Usage: ml add-model <family> <variant> <source> [--type ...] [--file <filename>]"
+      echo "  Usage: ml add-model <family> <variant> --url <hf-file-url>"
+      echo "  --family: override family detection when the repo name is ambiguous"
       ;;
 
     add-dataset)
@@ -52,23 +56,26 @@ show_help() {
 
     process-dataset)
       echo "ml process-dataset"
-      echo "  Converts a raw dataset into processed format for training"
-      echo "  Usage: ml process-dataset <family> <dataset-name>"
+      echo "  Converts a raw dataset into alpaca format (instruction, input, output)"
+      echo "  Usage: ml process-dataset <family> <dataset-name> [--instruction col --input col --output col]"
       ;;
 
     sample-dataset)
       echo "ml sample-dataset"
       echo "  Creates a smaller version of a processed dataset by randomly sampling N examples"
       echo "  Usage: ml sample-dataset <family> <dataset-name> <n>"
-      echo "  Example: ml sample-dataset qwen alpaca-cleaned 1000"
       ;;
 
     create-training-run)
       echo "ml create-training-run"
       echo "  Creates a new fine-tuning run configuration (Unsloth)"
-      echo "  Usage: ml create-training-run <run-name> <model-variant> <dataset-variant> [--method lora|qlora|fullft]"
-      echo "  --method: lora (bf16 base + adapters), qlora (4-bit NF4 base + adapters, default),"
-      echo "            fullft (all weights in bf16, ~10x lower LR)"
+      echo "  Usage: ml create-training-run <run-name> <family/model> <family/dataset> [options]"
+      echo "  --method lora|qlora|fullft   training method (default: qlora)"
+      echo "  --lora-r N                   adapter rank (default: 16)"
+      echo "  --lora-alpha N               adapter scaling (default: same as rank)"
+      echo "  --lora-dropout F             adapter dropout (default: 0)"
+      echo "  --lora-targets a,b,c         target modules (default: q,k,v,o,gate,up,down)"
+      echo "  --rslora                     rank-stabilized LoRA"
       ;;
 
     execute-training-run)
@@ -97,9 +104,7 @@ show_help() {
       echo "ml use-training-env"
       echo "  Switch the active training conda environment"
       echo "  Usage: ml use-training-env [env-name]"
-      echo "  Without args: shows current env and available options"
-      echo "  Example: ml use-training-env training-cuda13  # switch to CUDA 13 env"
-      echo "           ml use-training-env training          # switch back to stable"
+      echo "  Without args: shows the current env and the envs defined in envs/"
       ;;
 
     kill-training)
@@ -110,33 +115,35 @@ show_help() {
 
     set-vllm-env)
       echo "ml set-vllm-env"
-      echo "  Set the active vLLM env file for claude-local to detect"
-      echo "  Usage: ml set-vllm-env <env-file-name>"
-      echo "  Example: ml set-vllm-env qwen3.6-27b-int4.env"
-      ;;
-
-    serve-dflash)
-      echo "ml serve-dflash"
-      echo "  Starts the dflash_server with KVFlash (32K pool) + PFlash + DFlash DDTree for long-context serving"
-      echo "  Usage: ml serve-dflash"
-      echo "         ml serve-dflash --stop       stop the server"
-      echo "         ml serve-dflash --restart    restart the server"
-      echo "  Launches on port 8080 (Docker proxy routes to it automatically). Configure via configs/dflash/server.env"
-      echo "  Prefix caching makes multi-turn conversations ~1.3s/turn after first cold start"
+      echo "  Select the vLLM env file used by the Docker service and claude-local"
+      echo "  Usage: ml set-vllm-env [env-file-name]"
+      echo "  Without args: lists the env files in configs/vllm/"
+      echo "  Copies the chosen file to configs/vllm/active.env (gitignored)"
       ;;
 
     serve-model)
       echo "ml serve-model"
-      echo "  Serves a GGUF model via llama.cpp"
+      echo "  Serves a registered GGUF model via llama.cpp"
       echo "  Usage: ml serve-model <family> <variant> [--ctx n] [--ngl n] [--port n] [--host addr] [--fa]"
       echo "  For HF models, use the Docker vLLM service instead"
       ;;
 
-	compare-runs)
-	  echo "ml compare-runs"
-	  echo "  Compares two training runs (model, dataset, hash, status)"
-	  echo "  Usage: ml compare-runs <run1> <run2>"
-	  ;;
+    compare-runs)
+      echo "ml compare-runs"
+      echo "  Compares two training runs (model, dataset, hash, status)"
+      echo "  Usage: ml compare-runs <run1> <run2>"
+      ;;
+
+    quantize)
+      echo "ml quantize"
+      echo "  Quantizes a model to GGUF, EXL3 or NVFP4 (HF repo id or local directory)"
+      echo "  Usage: ml quantize <model> --format gguf  --quants Q4_K_M,Q8_0"
+      echo "         ml quantize <model> --format exl3  --bpw 4.0,3.0"
+      echo "         ml quantize <model> --format nvfp4 --calib <dataset-or-jsonl> --samples 256"
+      echo "         ml quantize <model> --format all   --dry-run"
+      echo "  Each format runs in its own conda env; see docs/quantization.md"
+      ;;
+
     eval)
       echo "ml eval"
       echo "  Runs lm-eval benchmarks against your active inference backend"
@@ -146,14 +153,14 @@ show_help() {
       echo ""
       echo "  First: pip install 'lm-eval[multitask]'"
       echo "  Then:  ml eval"
-      echo "      ml eval mmlu,gsm8k"
-      echo "      ml eval mmlu,ifeval 8"
+      echo "         ml eval mmlu,gsm8k"
+      echo "         ml eval mmlu,ifeval 8"
       ;;
 
     evals)
       echo "ml evals"
       echo "  Lists all recorded benchmark results from the eval registry"
-      echo "  Usage: ml evals"
+      echo "  Usage: ml evals [model-slug]"
       echo "  Shows: model, timestamp, tasks, scores, result file path"
       echo "  Registry: configs/evals/registry.json"
       ;;

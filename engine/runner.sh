@@ -23,19 +23,19 @@ case "$ACTION" in
     ;;
 
   tensorboard)
-    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training-cuda13/bin/python")
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training/bin/python")
     exec "$(dirname "$CONDA_PYTHON")/tensorboard" --logdir "${ML_STACK_HOME:-$HOME/ml-stack}/outputs/runs" --host 0.0.0.0 --port 6006
     ;;
 
   aim-ui)
-    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training-cuda13/bin/python")
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training/bin/python")
     exec "$(dirname "$CONDA_PYTHON")/aim" up --repo "${ML_STACK_HOME:-$HOME/ml-stack}/outputs/aim" --host 0.0.0.0 --port 43801
     ;;
 
   quantize)
     # Dispatcher is stdlib + huggingface_hub only; it shells out to the
-    # per-format interpreter (training-cuda13 / quant-exl3 / quant-nvfp4).
-    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training-cuda13/bin/python")
+    # per-format interpreter (training / quant-exl3 / quant-nvfp4).
+    CONDA_PYTHON=$("$ROOT/get-training-env" --python 2>/dev/null || echo "$HOME/miniconda/envs/training/bin/python")
     exec "$CONDA_PYTHON" "${ML_STACK_HOME:-$HOME/ml-stack}/scripts/quantize/quantize.py" "$@"
     ;;
 
@@ -57,10 +57,6 @@ case "$ACTION" in
 
   process-dataset)
     bash "$ROOT/process-dataset" "$@"
-    ;;
-
-  serve-dflash)
-    bash "$ROOT/serve-dflash" "$@"
     ;;
 
   serve-model)

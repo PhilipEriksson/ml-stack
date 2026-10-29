@@ -1,19 +1,36 @@
+# Training environment — PyTorch cu130 + Unsloth + TRL.
+#
+# Verified on an RTX 5090 (sm_120) with driver >= 580:
+#   python 3.12 / torch 2.14.1+cu130 / transformers 5.17.0 / trl 1.15.0
+#   peft 0.21.2 / datasets 4.8.5 / accelerate 1.15.0 / bitsandbytes 0.50.2
+#   unsloth 2026.10.7 / tensorboard 2.21.0 / aim 3.29.1
+#
+# Create:
+#   conda env create -f envs/training.yml
+#   ml use-training-env training
+#
+# torch is pulled from the PyTorch cu130 index via --extra-index-url; every
+# other package comes from PyPI. Do not run two `conda create` commands at the
+# same time — they share ~/miniconda/pkgs and corrupt the package cache.
+
 name: training
 channels:
-  - pytorch
-  - nvidia
   - defaults
 dependencies:
-  - python=3.10
-  - pytorch::pytorch==2.4.0
-  - pytorch::pytorch-cuda=12.1
+  - python=3.12
   - pip
   - pip:
-      - huggingface_hub
-      - transformers>=4.44.0
-      - datasets==2.21.0
-      - accelerate==0.33.0
-      - peft==0.12.0
-      - trl==0.10.0
-      - bitsandbytes==0.43.0
-      - unsloth==0.3.0
+      - --extra-index-url https://download.pytorch.org/whl/cu130
+      - torch==2.14.1+cu130
+      - torchvision==0.29.1+cu130
+      - transformers==5.17.0
+      - datasets==4.8.5
+      - accelerate==1.15.0
+      - peft==0.21.2
+      - trl==1.15.0
+      - bitsandbytes==0.50.2
+      - unsloth==2026.10.7
+      - unsloth_zoo==2026.10.7
+      - huggingface_hub==1.33.0
+      - tensorboard==2.21.0
+      - aim==3.29.1

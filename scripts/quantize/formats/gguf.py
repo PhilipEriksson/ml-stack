@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GGUF conversion + quantization via Unsloth's bundled llama.cpp converter.
 
-Runs in the training-cuda13 environment (Unsloth is installed there). Unsloth
+Runs in the active training environment (Unsloth is installed there). Unsloth
 stages its own co-versioned convert_hf_to_gguf + gguf-py, which is why this path
 works for architectures where stock llama.cpp's converter does not.
 

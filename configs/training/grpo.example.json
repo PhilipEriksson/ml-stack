@@ -1,12 +1,12 @@
 {
-  "_comment": "Example run config for the grpo-0.6b project. Copy to configs/training/grpo-0.6b.json and adjust. Registries under configs/ are gitignored local state — this example is the tracked reference.",
-  "project": "grpo-0.6b",
-  "base_model": "Qwen/Qwen3-0.6B",
+  "_comment": "Reference config for a verifier-reward (RLVR) run. Copy to configs/training/<project>.json and adjust — local copies are gitignored, this example is the tracked reference.",
+  "project": "<project-name>",
+  "base_model": "<hf-repo-id-or-local-path>",
   "dtype": "bfloat16",
-  "task": "gsm8k-verifiable",
+  "task": "<verifier-task-name>",
   "dataset": {
-    "train": "datasets/processed/gsm8k-coldstart/train.jsonl",
-    "eval": "datasets/processed/gsm8k-coldstart/eval.jsonl",
+    "train": "datasets/processed/<family>/<dataset>/train.jsonl",
+    "eval": "datasets/processed/<family>/<dataset>/eval.jsonl",
     "columns": ["prompt", "answer", "solution"]
   },
   "verifier": {
@@ -31,7 +31,7 @@
     "vllm_gpu_memory_utilization": 0.25
   },
   "hardware": {
-    "gpu": "RTX 5090 32GB",
-    "prereq": "stop :30000 server before GRPO stage"
+    "gpu": "<gpu-model-and-vram>",
+    "prereq": "stop any other GPU server before the GRPO stage"
   }
 }

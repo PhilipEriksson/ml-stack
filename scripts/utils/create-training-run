@@ -16,7 +16,7 @@ if [ -z "$1" ] || [ -z "$2" ]; then
   echo "  create-training-run <run-name> <family/model> <family/dataset> [options]"
   echo ""
   echo "  model and dataset must include their family prefix:"
-  echo "    ml create-training-run my-run qwen/qwen3.6-27b qwen/cnn_dailymail"
+  echo "    ml create-training-run <run-name> <family>/<model> <family>/<dataset>"
   echo ""
   echo "  Options:"
   echo "    --method lora|qlora|fullft   training method (default: qlora)"
@@ -101,13 +101,13 @@ DATA_FAM=$(echo "$DATASET_REF" | cut -d/ -f1)
 DATA_VAR=$(echo "$DATASET_REF" | cut -d/ -f2)
 
 if [ "$MODEL_FAM" = "$MODEL_VAR" ] || [ -z "$MODEL_VAR" ]; then
-  echo "❌ Model reference must be in family/variant format (e.g. qwen/qwen3.6-27b)"
+  echo "❌ Model reference must be in family/variant format (e.g. <family>/<model>)"
   echo "   Use: ml create-training-run <run-name> <family/model> <family/dataset>"
   exit 1
 fi
 
 if [ "$DATA_FAM" = "$DATA_VAR" ] || [ -z "$DATA_VAR" ]; then
-  echo "❌ Dataset reference must be in family/variant format (e.g. qwen/cnn_dailymail)"
+  echo "❌ Dataset reference must be in family/variant format (e.g. <family>/<dataset>)"
   echo "   Use: ml create-training-run <run-name> <family/model> <family/dataset>"
   exit 1
 fi

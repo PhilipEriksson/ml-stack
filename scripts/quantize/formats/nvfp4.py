@@ -119,7 +119,7 @@ def main() -> int:
             "       Activation global scales come from calibration data, and the\n"
             "       choice materially affects quality. Point it at text the model\n"
             "       actually sees — e.g. the training corpus you fine-tuned on:\n"
-            "         --calib ~/p5090-scratch/qwopus-0.8b/data/train.jsonl\n"
+            "         --calib datasets/processed/<family>/<dataset>/train.jsonl\n"
             "       or an HF dataset id:\n"
             "         --calib HuggingFaceH4/ultrachat_200k",
             file=sys.stderr,

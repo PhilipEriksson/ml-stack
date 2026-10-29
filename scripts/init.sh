@@ -32,7 +32,7 @@ echo ""
 # =========================
 if grep -qF "ml-stack/cli" "$BASHRC" 2>/dev/null; then
   echo "✅ 'ml' already in PATH ($BASHRC)"
-else
+elif [ "$INSTALL_MODE" = true ]; then
   echo "🔧 Adding 'ml' command to PATH in $BASHRC..."
   echo "" >> "$BASHRC"
   echo "# ML Stack CLI" >> "$BASHRC"
@@ -63,6 +63,10 @@ ENVEOF
   fi
 
   echo "✅ Added. Run: source $BASHRC"
+else
+  echo "⚠️  'ml' not in PATH ($BASHRC)"
+  echo "     → Add with: bash scripts/init.sh --install"
+  echo "     → Or for this shell: export PATH=\"$ROOT/cli:\$PATH\""
 fi
 
 # =========================
@@ -249,12 +253,32 @@ else
 fi
 
 echo ""
-echo "💡 Optional: For optimal Flash Attention 2 on RTX 5090, create the CUDA 13 training environment:"
-echo "   See README.md → Conda Environments for setup instructions"
-echo "   After setup: ml use-training-env training-cuda13"
+echo "💡 Training environments are defined in envs/. Create one with:"
+echo "   conda env create -f envs/training.yml"
+echo "   ml use-training-env training"
 
 # =========================
-# 7. llama.cpp
+# 7. vLLM env selection
+# =========================
+echo ""
+echo "⚙️  vLLM config:"
+
+if [ -f "$ROOT/configs/vllm/active.env" ]; then
+  echo "  ✅ configs/vllm/active.env"
+else
+  echo "  ⚠️  configs/vllm/active.env (missing)"
+  if [ "$INSTALL_MODE" = true ]; then
+    cp "$ROOT/configs/vllm/example.env" "$ROOT/configs/vllm/active.env"
+    echo "     → Created from example.env — set MODEL_NAME before starting vLLM"
+  else
+    echo "     → Create with: cp configs/vllm/example.env configs/vllm/active.env"
+    echo "       then edit MODEL_NAME, or run: ml set-vllm-env <file>"
+    MISSING=1
+  fi
+fi
+
+# =========================
+# 8. llama.cpp
 # =========================
 echo ""
 echo "📦 llama.cpp:"
@@ -275,11 +299,11 @@ if [ -d "$LLAMA_BUILD/.git" ] || [ -f "$LLAMA_BUILD/CMakeLists.txt" ]; then
   fi
 else
   echo "  ⚠️  llama.cpp source not found"
-  echo "     → Clone with: git clone --recursive https://github.com/ggerganov/llama.git $LLAMA_BUILD"
+  echo "     → Clone with: git clone --recursive https://github.com/ggml-org/llama.cpp.git $LLAMA_BUILD"
 fi
 
 # =========================
-# 8. Docker images
+# 9. Docker images
 # =========================
 echo ""
 echo "🐳 Docker images:"
@@ -306,12 +330,12 @@ if [ -n "$DOCKER_CMD" ]; then
 fi
 
 # =========================
-# 9. Project structure
+# 10. Project structure
 # =========================
 echo ""
 echo "📂 Project structure:"
 
-for dir in models/base models/quantized models/finetuned datasets/raw datasets/processed outputs/evals outputs/runs scripts/utils scripts/eval services/vllm services/api-webui services/searxng services/docker configs/vllm configs/searxng configs/llama configs/evals configs/runs; do
+for dir in models/base models/quantized models/finetuned datasets/raw datasets/processed outputs/evals outputs/runs scripts/utils scripts/eval scripts/train scripts/quantize services/vllm services/api-webui services/searxng services/docker configs/vllm configs/searxng configs/llama configs/evals configs/runs configs/training; do
   if [ -d "$ROOT/$dir" ]; then
     echo "  ✅ $dir/"
   else
@@ -324,7 +348,7 @@ for dir in models/base models/quantized models/finetuned datasets/raw datasets/p
   done
 
 # =========================
-# 10. Summary
+# 11. Summary
 # =========================
 echo ""
 if [ "$MISSING" -eq 0 ] && [ "$INSTALL_MODE" = false ]; then

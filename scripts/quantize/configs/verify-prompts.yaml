@@ -5,30 +5,19 @@
 # should contain. `expect` is a smoke signal, not a benchmark — a model can be
 # right without matching the string, and wrong while matching it.
 #
+# `template` wraps every prompt before it reaches the model. The default is the
+# bare prompt; reasoning models usually need their own chat scaffold so the
+# reasoning block is actually emitted. `{prompt}` is substituted.
+#
+# `close_tag` is the token that ends a reasoning block, used to report whether
+# the block terminated inside --max-new. Set it to "" for non-reasoning models.
+#
 # Override per run with --prompts <file>.
 
+template: "{prompt}"
+close_tag: "</think>"
+
 default:
-  - id: arithmetic
-    prompt: >-
-      A train travels 240 km in 3 hours, then 180 km in 2 hours.
-      What is its average speed for the whole journey?
-    expect: "84"
-
-  - id: code
-    prompt: >-
-      Write a Python function that returns the two largest numbers in a list
-      without using sorted() or max().
-    expect: "def"
-
-  - id: logic
-    prompt: >-
-      Three boxes are labelled Apples, Oranges, and Mixed, but every label is
-      wrong. You may draw one fruit from one box. How do you determine the
-      contents of all three?
-    expect: "Mixed"
-
-# Per-model overrides. Keyed on the model slug.
-qwopus-0.8b:
   - id: arithmetic
     prompt: >-
       A train travels 240 km in 3 hours, then 180 km in 2 hours.

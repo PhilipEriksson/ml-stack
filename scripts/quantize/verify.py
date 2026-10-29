@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,30 +27,25 @@ from pathlib import Path
 import yaml
 
 CONFIGS = Path(__file__).resolve().parent / "configs"
-LLAMA_CLI = Path.home() / "ml-stack/runtimes/llama.cpp/build/bin/llama-cli"
-
-OPEN_TAG = "<" + "think" + ">"
-CLOSE_TAG = "<" + "/" + "think" + ">"
+ML_STACK = Path(os.environ.get("ML_STACK_HOME", Path.home() / "ml-stack"))
+LLAMA_CLI = ML_STACK / "runtimes/llama.cpp/build/bin/llama-cli"
 
 
-def load_prompts(path: Path, slug: str | None) -> list[dict]:
+def load_prompts(path: Path, slug: str | None) -> tuple[list[dict], str, str]:
+    """Return (prompts, template, close_tag) from the prompt file."""
     table = yaml.safe_load(path.read_text()) or {}
-    if slug and slug in table:
-        return table[slug]
-    return table.get("default", [])
+    prompts = table.get(slug) if slug and slug in table else table.get("default", [])
+    template = table.get("template", "{prompt}")
+    close_tag = table.get("close_tag", "")
+    return prompts or [], template, close_tag
 
 
 def run_gguf(model_path: Path, prompt: str, max_new: int) -> str:
     if not LLAMA_CLI.exists():
         return f"ERROR: llama-cli not found at {LLAMA_CLI}"
-    # Apply the Qwen chat scaffold manually so the comparison is apples-to-apples.
-    full = (
-        f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        f"<|im_start|>assistant\n{OPEN_TAG}\n"
-    )
     cmd = [
         str(LLAMA_CLI), "-m", str(model_path),
-        "-p", full, "-n", str(max_new), "--temp", "0.6",
+        "-p", prompt, "-n", str(max_new), "--temp", "0.6",
         "--no-display-prompt",
     ]
     try:
@@ -115,11 +111,7 @@ def run_exl3(model_dir: Path, prompt: str, max_new: int) -> str:
     tok = Tokenizer.from_config(config)
     gen = Generator(model=model, cache=cache, tokenizer=tok)
 
-    text = (
-        f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        f"<|im_start|>assistant\n{OPEN_TAG}\n"
-    )
-    out = gen.generate(prompt=text, max_new_tokens=max_new,
+    out = gen.generate(prompt=prompt, max_new_tokens=max_new,
                        sampler=DefaultSampler())
     if isinstance(out, list):
         return out[0] if out else ""
@@ -139,11 +131,16 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    prompts = load_prompts(Path(args.prompts), args.slug)
+    prompts, template, close_tag = load_prompts(Path(args.prompts), args.slug)
     if not prompts:
         sys.exit("ERROR: no prompts loaded")
 
-    report = {"prompts": [p["id"] for p in prompts], "artifacts": {}}
+    report = {
+        "prompts": [p["id"] for p in prompts],
+        "template": template,
+        "close_tag": close_tag,
+        "artifacts": {},
+    }
 
     for spec in args.artifact:
         kind, label, path = spec.split(":", 2)
@@ -154,11 +151,12 @@ def main() -> int:
         results = []
         for pr in prompts:
             print(f"  {pr['id']} ...", end=" ", flush=True)
-            text = RUNNERS[kind](p, pr["prompt"], args.max_new)
+            text = RUNNERS[kind](p, template.replace("{prompt}", pr["prompt"]), args.max_new)
             expect = pr.get("expect")
-            # llama-cli renders the closing think token as "[End thinking]"
+            # llama-cli renders a closing reasoning token as "[End thinking]"
             # rather than emitting the raw token, so accept either form.
-            has_close = (CLOSE_TAG in text) or ("[End thinking]" in text)
+            has_close = bool(close_tag) and (
+                close_tag in text or "[End thinking]" in text)
             results.append({
                 "id": pr["id"],
                 "output": text,

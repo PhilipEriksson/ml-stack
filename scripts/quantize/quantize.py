@@ -5,9 +5,9 @@ Quantizes any supported model into GGUF, EXL3, or NVFP4. Runs in any Python
 (stdlib only) and shells out to the per-format interpreter, because each format
 needs a different environment:
 
-    gguf  -> training-cuda13  (Unsloth's bundled converter)
-    exl3  -> quant-exl3       (exllamav3, torch 2.10.0+cu128)
-    nvfp4 -> quant-nvfp4      (llm-compressor)
+    gguf  -> the active training env  (Unsloth's bundled converter)
+    exl3  -> quant-exl3               (exllamav3, torch 2.10.0+cu128)
+    nvfp4 -> quant-nvfp4              (llm-compressor)
 
 Usage:
     ml quantize <model> --format gguf  --quants Q4_K_M,Q8_0
@@ -30,12 +30,33 @@ ML_STACK = Path(os.environ.get("ML_STACK_HOME", Path.home() / "ml-stack"))
 SCRIPTS = ML_STACK / "scripts" / "quantize"
 CONFIGS = SCRIPTS / "configs"
 
+CONDA_ROOTS = (Path.home() / "miniconda", Path.home() / "anaconda3", Path.home() / "conda")
+
+
+def _env_python(env_name: str) -> Path:
+    """Resolve a conda env's python, falling back to the conventional path."""
+    for root in CONDA_ROOTS:
+        p = root / "envs" / env_name / "bin" / "python"
+        if p.exists():
+            return p
+    return CONDA_ROOTS[0] / "envs" / env_name / "bin" / "python"
+
+
+def _training_env_name() -> str:
+    cfg = ML_STACK / "configs" / ".active-training-env"
+    if cfg.exists():
+        name = cfg.read_text().strip()
+        if name:
+            return name
+    return "training"
+
+
 # Each format runs in its own interpreter. This is the whole reason the
 # dispatcher shells out instead of importing the format modules.
 ENV_PYTHON = {
-    "gguf": Path.home() / "miniconda/envs/training-cuda13/bin/python",
-    "exl3": Path.home() / "miniconda/envs/quant-exl3/bin/python",
-    "nvfp4": Path.home() / "miniconda/envs/quant-nvfp4/bin/python",
+    "gguf": _env_python(_training_env_name()),
+    "exl3": _env_python("quant-exl3"),
+    "nvfp4": _env_python("quant-nvfp4"),
 }
 
 FORMATS = ("gguf", "exl3", "nvfp4")
@@ -101,7 +122,7 @@ def run_format(fmt: str, model_dir: Path, cfg: dict, args) -> int:
     py = ENV_PYTHON[fmt]
     if not py.exists():
         print(f"ERROR: {fmt} environment missing: {py}")
-        print(f"       see {SCRIPTS}/README.md for setup")
+        print(f"       see {ML_STACK}/docs/quantization.md for setup")
         return 1
 
     script = SCRIPTS / "formats" / f"{fmt}.py"
@@ -109,7 +130,7 @@ def run_format(fmt: str, model_dir: Path, cfg: dict, args) -> int:
         str(py), str(script),
         "--model-dir", str(model_dir),
         "--arch", arch_of(cfg),
-        "--family", family_of(cfg, model_dir),
+        "--family", args.family or family_of(cfg, model_dir),
         "--slug", args.slug or slug_of(model_dir),
         "--ml-stack", str(ML_STACK),
     ]
@@ -158,6 +179,8 @@ def main() -> int:
     ap.add_argument("--work", default=None, help="override working directory")
     ap.add_argument("--slug", default=None,
                     help="output name (default: the model directory name)")
+    ap.add_argument("--family", default=None,
+                    help="output family directory (default: config.json model_type)")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the commands without running them")
